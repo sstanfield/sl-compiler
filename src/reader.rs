@@ -303,7 +303,7 @@ fn read_utf_scalar(
 /*
 fn wrap_trim(exp: Expression, meta: Option<ExpMeta>) -> Expression {
     let trim_list = vec![
-        make_exp(ExpEnum::Symbol("str-trim", SymLoc::None), meta),
+        make_exp(ExpEnum::Symbol("str-trim"), meta),
         exp,
     ];
     Expression::with_list_meta(trim_list, None)
@@ -381,7 +381,7 @@ fn read_string<'sym>(
             let mut proc_ch = true;
             if read_table.contains_key(&*ch) {
                 proc_ch = false;
-                /*if let ExpEnum::Symbol(s, _) = read_table.get(&*ch).unwrap().get().data {
+                /*if let ExpEnum::Symbol(s) = read_table.get(&*ch).unwrap().get().data {
                     let res = prep_reader_macro(environment, chars, s, &ch);
                     match res {
                         Ok((None, ichars)) => {
@@ -409,7 +409,7 @@ fn read_string<'sym>(
                                     } else {
                                         drop(exp_d);
                                         let mut list = vec![make_exp(
-                                            ExpEnum::Symbol("str", SymLoc::None),
+                                            ExpEnum::Symbol("str"),
                                             meta,
                                         )];
                                         if !symbol.is_empty() {
@@ -523,7 +523,7 @@ fn do_atom(
                 let potential_float: Result<f64, ParseFloatError> = num_str.parse();
                 match potential_float {
                     Ok(v) => Value::Float(v),
-                    Err(_) => Value::Symbol(vm.intern(symbol), None),
+                    Err(_) => Value::Symbol(vm.intern(symbol)),
                 }
             }
         }
@@ -534,7 +534,7 @@ fn do_atom(
         if symbol == "nil" {
             Value::Nil
         } else {
-            Value::Symbol(vm.intern(symbol), None)
+            Value::Symbol(vm.intern(symbol))
         }
     }
 }
@@ -697,7 +697,7 @@ fn read_vector(
         let (exp, mut ichars) =
             match read_inner(vm, reader_state, chars, buffer, in_back_quote, true) {
                 Ok((exp, ichars)) => {
-                    if let Some(Value::Symbol(i, _)) = &exp {
+                    if let Some(Value::Symbol(i)) = &exp {
                         if *i == close_intern {
                             return Ok((v, ichars));
                         }
@@ -727,7 +727,7 @@ fn read_vector(
 fn get_unquote_lst(vm: &mut Vm, exp: Value) -> Option<Value> {
     if let Value::Reference(h) = exp {
         let uq = vm.intern("unquote");
-        if let Object::Pair(Value::Symbol(si, _), cdr) = vm.get(h) {
+        if let Object::Pair(Value::Symbol(si), cdr) = vm.get(h) {
             if *si == uq {
                 return Some(*cdr);
             }
@@ -738,12 +738,12 @@ fn get_unquote_lst(vm: &mut Vm, exp: Value) -> Option<Value> {
 
 fn is_unquote_splice(vm: &mut Vm, exp: Value) -> bool {
     fn is_splice(vm: &mut Vm, car: Value) -> bool {
-        if let Value::Symbol(si, _) = car {
+        if let Value::Symbol(si) = car {
             if si == vm.intern("unquote-splice") {
                 return true;
             }
         }
-        if let Value::Symbol(si, _) = car {
+        if let Value::Symbol(si) = car {
             if si == vm.intern("unquote-splice!") {
                 return true;
             }
@@ -792,7 +792,7 @@ fn read_list(
         let (exp, mut ichars) =
             match read_inner(vm, reader_state, chars, buffer, in_back_quote, true) {
                 Ok((exp, ichars)) => {
-                    if let Some(Value::Symbol(si, _)) = exp {
+                    if let Some(Value::Symbol(si)) = exp {
                         if si == i_close {
                             return Ok((head, ichars));
                         } else if si == i_dot {
@@ -832,7 +832,7 @@ fn read_list(
                 }
                 let exp = if let Some(uqexp) = get_unquote_lst(vm, exp) {
                     // Do this so `(x y . ,z) works
-                    let mut v = vec![Value::Symbol(vm.intern("unquote"), None)];
+                    let mut v = vec![Value::Symbol(vm.intern("unquote"))];
                     let mut i = 0;
                     for e in uqexp.iter(vm) {
                         v.push(e);
@@ -936,7 +936,7 @@ fn read_inner(
     while let Some((ch, peek_ch)) = next2(&mut chars) {
         reader_state.column += 1;
         /*if read_table.contains_key(&*ch) {
-            if let ExpEnum::Symbol(s, _) = read_table.get(&*ch).unwrap().get().data {
+            if let ExpEnum::Symbol(s) = read_table.get(&*ch).unwrap().get().data {
                 let res = prep_reader_macro(environment, chars, s, &ch);
                 match res {
                     Ok((None, ichars)) => {
@@ -947,7 +947,7 @@ fn read_inner(
                 }
             }
         } else if read_table_term.contains_key(&*ch) {
-            if let ExpEnum::Symbol(s, _) = read_table_term.get(&*ch).unwrap().get().data {
+            if let ExpEnum::Symbol(s) = read_table_term.get(&*ch).unwrap().get().data {
                 let res = prep_reader_macro(environment, chars, s, &ch);
                 match res {
                     Ok((None, ichars)) => {
@@ -973,10 +973,9 @@ fn read_inner(
             "'" => match read_inner(vm, reader_state, chars, buffer, in_back_quote, false) {
                 Ok((Some(exp), ichars)) => {
                     let cdr = vm.alloc(Object::Pair(exp, Value::Nil));
-                    let qlist = Value::Reference(vm.alloc(Object::Pair(
-                        Value::Symbol(i_quote, None),
-                        Value::Reference(cdr),
-                    )));
+                    let qlist = Value::Reference(
+                        vm.alloc(Object::Pair(Value::Symbol(i_quote), Value::Reference(cdr))),
+                    );
                     return Ok((Some(qlist), ichars));
                 }
                 Ok((None, ichars)) => {
@@ -995,7 +994,7 @@ fn read_inner(
                 Ok((Some(exp), ichars)) => {
                     let cdr = vm.alloc(Object::Pair(exp, Value::Nil));
                     let qlist = Value::Reference(vm.alloc(Object::Pair(
-                        Value::Symbol(i_backquote, None),
+                        Value::Symbol(i_backquote),
                         Value::Reference(cdr),
                     )));
                     return Ok((Some(qlist), ichars));
@@ -1015,12 +1014,12 @@ fn read_inner(
             "," if in_back_quote => {
                 let sym = if peek_ch == "@" {
                     chars.next();
-                    Value::Symbol(vm.intern("unquote-splice"), None)
+                    Value::Symbol(vm.intern("unquote-splice"))
                 } else if peek_ch == "." {
                     chars.next();
-                    Value::Symbol(vm.intern("unquote-splice!"), None)
+                    Value::Symbol(vm.intern("unquote-splice!"))
                 } else {
-                    Value::Symbol(vm.intern("unquote"), None)
+                    Value::Symbol(vm.intern("unquote"))
                 };
                 match read_inner(vm, reader_state, chars, buffer, in_back_quote, false) {
                     Ok((Some(exp), ichars)) => {
@@ -1142,7 +1141,7 @@ fn read_inner(
             }
             ")" => {
                 if return_close_paren {
-                    return Ok((Some(Value::Symbol(vm.intern(")"), None)), chars));
+                    return Ok((Some(Value::Symbol(vm.intern(")"))), chars));
                 } else {
                     let reason = format!(
                         "Unexpected ')': {} line {} col {}",

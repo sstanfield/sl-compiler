@@ -2,7 +2,14 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use slvm::chunk::*;
+use slvm::error::*;
+use slvm::heap::*;
+use slvm::opcodes::*;
+use slvm::value::*;
 use slvm::vm::*;
+
+use sl_compiler::reader::*;
 
 #[derive(Clone, Debug)]
 pub struct SymbolsInt {
@@ -27,7 +34,9 @@ impl Symbols {
             syms: HashMap::new(),
             count: 0,
         }));
-        let outer = syms.as_ref().map(|lex_syms| Rc::new(RefCell::new(lex_syms.clone())));
+        let outer = syms
+            .as_ref()
+            .map(|lex_syms| Rc::new(RefCell::new(lex_syms.clone())));
         Symbols {
             data,
             outer,
@@ -109,6 +118,79 @@ impl Symbols {
     }
 }
 
+struct CompileState {
+    symbols: Rc<RefCell<Symbols>>,
+    chunk: Chunk,
+}
+
+fn compile(vm: &mut Vm, state: &mut CompileState, exp: Value, result: usize) -> VMResult<()> {
+    let def = vm.intern("def");
+    let add = vm.intern("+");
+    let line = 1;
+    match exp {
+        Value::Reference(h) => match vm.get(h) {
+            Object::Pair(car, cdr) => match car {
+                Value::Symbol(i) if *i == def => {
+                    let cdr: Vec<Value> = cdr.iter(vm).collect();
+                    if cdr.len() == 2 {
+                        if let Value::Symbol(si) = cdr[0] {
+                            let sym = vm.get_interned(si);
+                            compile(vm, state, cdr[1], result + 1)?;
+                            let si_const = state.chunk.add_constant(vm.reserve_symbol(sym));
+                            state
+                                .chunk
+                                .encode2(CONST, result as u16, si_const as u16, line)?;
+                            state
+                                .chunk
+                                .encode2(DEF, result as u16, (result + 1) as u16, line)?;
+                            // XXX set result...
+                        }
+                    }
+                }
+                Value::Symbol(i) if *i == add => {
+                    let cdr: Vec<Value> = cdr.iter(vm).collect();
+                    if cdr.len() == 2 {
+                        compile(vm, state, cdr[0], result + 1)?;
+                        compile(vm, state, cdr[1], result + 2)?;
+                        state.chunk.encode3(
+                            ADD,
+                            result as u16,
+                            (result + 1) as u16,
+                            (result + 2) as u16,
+                            line,
+                        )?;
+                    }
+                }
+                _ => {}
+            },
+            _ => {}
+        },
+        _ => {
+            let const_i = state.chunk.add_constant(exp);
+            state
+                .chunk
+                .encode2(CONST, result as u16, const_i as u16, line)?;
+        }
+    }
+    state.chunk.encode0(RET, line)?;
+    Ok(())
+}
+
 fn main() {
-    println!("Hello, world!");
+    let mut vm = Vm::new();
+    let mut reader_state = ReaderState::new();
+    let mut state = CompileState {
+        symbols: Rc::new(RefCell::new(Symbols::with_outer(&None))),
+        chunk: Chunk::new("no_file", 1),
+    };
+    let txt = "(def xxx (def yyy (+ 3 2)))";
+    let exp = read(&mut vm, &mut reader_state, txt, None, false).unwrap();
+    compile(&mut vm, &mut state, exp, 0).unwrap();
+    println!("Compile: {}", txt);
+    state.chunk.disassemble_chunk(&vm).unwrap();
+    let chunk = Rc::new(state.chunk);
+    vm.execute(chunk.clone()).unwrap();
+    println!("POST exec:");
+    chunk.disassemble_chunk(&vm).unwrap();
+    //println!("Hello, world!");
 }
