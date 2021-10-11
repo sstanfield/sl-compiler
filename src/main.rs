@@ -273,6 +273,7 @@ fn compile_list(
     let set = vm.intern("set!");
     let do_ = vm.intern("do");
     let fn_ = vm.intern("fn");
+    let if_ = vm.intern("if");
     let add = vm.intern("+");
     let sub = vm.intern("-");
     let mul = vm.intern("*");
@@ -284,6 +285,23 @@ fn compile_list(
                 compile_fn(vm, state, cdr[0], &cdr[1..], result, line)?
             } else {
                 return Err(VMError::new_compile("Malformed fn form."));
+            }
+        }
+        Value::Symbol(i) if i == if_ => {
+            let mut cdr_i = cdr.iter();
+            let mut end_patches = Vec::new();
+            //if let Some(r) = cdr_i.next() {
+            //    compile(vm, state, *r, result)?;
+            //}
+            while let Some(r) = cdr_i.next() {
+                compile(vm, state, *r, result)?;
+                state.chunk.encode2(JMPFF, result as u16, 0, line)?;
+                let patch = state.chunk.code.len();
+                if let Some(r) = cdr_i.next() {
+                    compile(vm, state, *r, result)?;
+                    state.chunk.encode1(JMPF, result as u16, line)?;
+                    end_patches.push(state.chunk.code.len());
+                }
             }
         }
         Value::Symbol(i) if i == do_ => {
@@ -503,8 +521,8 @@ fn compile(vm: &mut Vm, state: &mut CompileState, exp: Value, result: usize) -> 
 
 fn main() {
     let mut vm = Vm::new();
-    vm.set_global("pr", Value::Builtin(pr));
-    vm.set_global("prn", Value::Builtin(prn));
+    vm.set_global("pr", Value::Builtin(CallFunc { func: pr }));
+    vm.set_global("prn", Value::Builtin(CallFunc { func: prn }));
     let mut reader_state = ReaderState::new();
     let mut state = CompileState {
         symbols: Rc::new(RefCell::new(Symbols::with_outer(None))),
