@@ -140,14 +140,14 @@ impl CompileState {
 
 fn pr(vm: &mut Vm, registers: &[Value]) -> VMResult<Value> {
     for v in registers {
-        print!("{}", v.display_value(vm));
+        print!("{}", v.pretty_value(vm));
     }
     Ok(Value::Nil)
 }
 
 fn prn(vm: &mut Vm, registers: &[Value]) -> VMResult<Value> {
     for v in registers {
-        print!("{}", v.display_value(vm));
+        print!("{}", v.pretty_value(vm));
     }
     println!();
     Ok(Value::Nil)
@@ -172,6 +172,23 @@ fn compile_call(
     state
         .chunk
         .encode3(CALL, b_reg as u16, cdr.len() as u16, result as u16, line)?;
+    Ok(())
+}
+
+fn compile_callg(
+    vm: &mut Vm,
+    state: &mut CompileState,
+    global: u32,
+    cdr: &[Value],
+    result: usize,
+    line: u32,
+) -> VMResult<()> {
+    for (i, r) in cdr.iter().enumerate() {
+        compile(vm, state, *r, result + i + 1)?;
+    }
+    state
+        .chunk
+        .encode_callg(global, cdr.len() as u16, result as u16, line)?;
     Ok(())
 }
 
@@ -253,9 +270,13 @@ fn compile_list(
     result: usize,
 ) -> VMResult<()> {
     let def = vm.intern("def");
+    let set = vm.intern("set!");
     let do_ = vm.intern("do");
     let fn_ = vm.intern("fn");
     let add = vm.intern("+");
+    let sub = vm.intern("-");
+    let mul = vm.intern("*");
+    let div = vm.intern("/");
     let line = 1;
     match car {
         Value::Symbol(i) if i == fn_ => {
@@ -279,41 +300,141 @@ fn compile_list(
                     state
                         .chunk
                         .encode2(DEF, result as u16, (result + 1) as u16, line)?;
+                } else {
+                    return Err(VMError::new_compile("def: expected symbol"));
                 }
+            } else {
+                return Err(VMError::new_compile("def: malformed"));
+            }
+        }
+        Value::Symbol(i) if i == set => {
+            if cdr.len() == 2 {
+                if let Value::Symbol(si) = cdr[0] {
+                    if let Some(idx) = state.get_symbol(si) {
+                        compile(vm, state, cdr[1], result)?;
+                        state
+                            .chunk
+                            .encode2(SET, (idx + 1) as u16, result as u16, line)?;
+                    } else {
+                        compile(vm, state, cdr[1], result + 1)?;
+                        let si_const = vm.reserve_index(si);
+                        state.chunk.encode_refi(result as u16, si_const, line)?;
+                        state
+                            .chunk
+                            .encode2(DEF, result as u16, (result + 1) as u16, line)?;
+                    }
+                } else {
+                    return Err(VMError::new_compile("set!: expected symbol"));
+                }
+            } else {
+                return Err(VMError::new_compile("set!: malformed"));
             }
         }
         Value::Symbol(i) if i == add => {
-            if cdr.len() == 2 {
-                compile(vm, state, cdr[0], result + 1)?;
-                compile(vm, state, cdr[1], result + 2)?;
-                state.chunk.encode3(
-                    ADD,
-                    result as u16,
-                    (result + 1) as u16,
-                    (result + 2) as u16,
-                    line,
-                )?;
+            if cdr.is_empty() {
+                compile(vm, state, Value::Int(0), result)?;
+            } else if cdr.len() == 1 {
+                compile(vm, state, cdr[0], result)?;
+            } else {
+                for (i, v) in cdr.iter().enumerate() {
+                    if i > 0 {
+                        compile(vm, state, *v, result + 1)?;
+                        state.chunk.encode3(
+                            ADDM,
+                            result as u16,
+                            result as u16,
+                            (result + 1) as u16,
+                            line,
+                        )?;
+                    } else {
+                        compile(vm, state, *v, result)?;
+                    }
+                }
+            }
+        }
+        Value::Symbol(i) if i == sub => {
+            if cdr.is_empty() {
+                return Err(VMError::new_compile(
+                    "Malformed -, requires at least one argument.",
+                ));
+            } else if cdr.len() == 1 {
+                if let Ok(i) = cdr[0].get_int() {
+                    compile(vm, state, Value::Int(-i), result)?;
+                } else if let Ok(f) = cdr[0].get_float() {
+                    compile(vm, state, Value::Float(-f), result)?;
+                }
+            } else {
+                for (i, v) in cdr.iter().enumerate() {
+                    if i > 0 {
+                        compile(vm, state, *v, result + 1)?;
+                        state.chunk.encode3(
+                            SUBM,
+                            result as u16,
+                            result as u16,
+                            (result + 1) as u16,
+                            line,
+                        )?;
+                    } else {
+                        compile(vm, state, *v, result)?;
+                    }
+                }
+            }
+        }
+        Value::Symbol(i) if i == mul => {
+            if cdr.is_empty() {
+                compile(vm, state, Value::Int(1), result)?;
+            } else if cdr.len() == 1 {
+                compile(vm, state, cdr[0], result)?;
+            } else {
+                for (i, v) in cdr.iter().enumerate() {
+                    if i > 0 {
+                        compile(vm, state, *v, result + 1)?;
+                        state.chunk.encode3(
+                            MULM,
+                            result as u16,
+                            result as u16,
+                            (result + 1) as u16,
+                            line,
+                        )?;
+                    } else {
+                        compile(vm, state, *v, result)?;
+                    }
+                }
+            }
+        }
+        Value::Symbol(i) if i == div => {
+            if cdr.len() <= 1 {
+                return Err(VMError::new_compile(
+                    "Malformed /, requires at least two arguments.",
+                ));
+            } else {
+                for (i, v) in cdr.iter().enumerate() {
+                    if i > 0 {
+                        compile(vm, state, *v, result + 1)?;
+                        state.chunk.encode3(
+                            DIVM,
+                            result as u16,
+                            result as u16,
+                            (result + 1) as u16,
+                            line,
+                        )?;
+                    } else {
+                        compile(vm, state, *v, result)?;
+                    }
+                }
             }
         }
         Value::Symbol(i) => {
             if let Some(idx) = state.get_symbol(i) {
                 compile_call_reg(vm, state, (idx + 1) as u16, cdr, result, line)?
-            } else if let Some(global) = vm.intern_to_global(i) {
-                match global {
-                    Value::Builtin(builtin) => {
-                        compile_call(vm, state, Value::Builtin(builtin), cdr, result, line)?
-                    }
-                    Value::Reference(h) => {
-                        if let Object::Lambda(_) = vm.get(h) {
-                            compile_call(vm, state, Value::Reference(h), cdr, result, line)?
-                        }
-                    }
-                    Value::Undefined => {
-                        let v = vm.reserve_interned(i);
-                        compile_call(vm, state, v, cdr, result, line)?
-                    }
-                    _ => {}
+            } else {
+                let slot = vm.reserve_index(i);
+                // Is a global so set up a call and will error at runtime if
+                // not callable (dynamic is fun).
+                if let Value::Undefined = vm.get_global(slot) {
+                    eprintln!("Warning: {} not defined.", vm.get_interned(i));
                 }
+                compile_callg(vm, state, slot as u32, cdr, result, line)?
             }
         }
         Value::Builtin(builtin) => {
@@ -364,7 +485,7 @@ fn compile(vm: &mut Vm, state: &mut CompileState, exp: Value, result: usize) -> 
             if let Some(idx) = state.get_symbol(i) {
                 state
                     .chunk
-                    .encode2(SET, result as u16, (idx + 1) as u16, line)?;
+                    .encode2(MOV, result as u16, (idx + 1) as u16, line)?;
             } else {
                 let const_i = vm.reserve_index(i);
                 state.chunk.encode_refi(result as u16, const_i, line)?;
@@ -389,7 +510,32 @@ fn main() {
         symbols: Rc::new(RefCell::new(Symbols::with_outer(None))),
         chunk: Chunk::new("no_file", 1),
     };
-    let txt = "(do (pr \"Hello World!\n\n\")(prn \"hello: \"(def xxx (def yyy (+ 3 2)))) (def fn1 (fn (a) (prn \"FUNC\" a)(prn (a 10))))(fn1 (fn (x) (+ x 1))))";
+    let txt = "(do
+    (pr \"Hello World!\n\")
+    (prn \"hello: \"(def xxx (def yyy (+ 3 2))))
+    (def fn1 (fn (a) (prn \"FUNC\" a)(prn (a 10))))
+    (fn1 (fn (x) (set! x (+ x 2))(+ x 1)))
+    (def fn2 (fn (x y) (set! x (+ x 1))(set! y (+ y 1))(+ x y)))
+    (prn \"am i 7? \" (fn2 2 3))
+    (def xx 5)(prn \"xx: \" xx)
+    (def fn3 (fn (y) (set! xx (+ xx 1))(set! y (+ y 1))(+ xx y)))
+    (prn \"am i 10? \" (fn3 3) \" \" xx)
+    (prn \"xx: \" xx)
+    (def xx 7)(prn \"xx: \" xx)
+    (prn \"am i 10? \" (fn3 3) \" \" xx)
+    (prn \"am i 15? \" (+ 10 3 2))
+    (prn \"am i 12? \" (+ 12))
+    (prn \"am i 0? \" (+))
+    (prn \"am i -5? \" (- 5))
+    (prn \"am i 1? \" (- 9 8))
+    (prn \"am i 0? \" (- 9 8 1))
+    (prn \"am i 1? \" (*))
+    (prn \"am i 5? \" (* 5))
+    (prn \"am i 15? \" (* 3 5))
+    (prn \"am i 15? \" (* 3 5))
+    (prn \"am i 30? \" (* 3 5 2))
+    (prn \"am i 3? \" (/ 15 5))
+    )";
     let exp = read(&mut vm, &mut reader_state, txt, None, false).unwrap();
     compile(&mut vm, &mut state, exp, 0).unwrap();
     state.chunk.encode0(RET, 1).unwrap();
