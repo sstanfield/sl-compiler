@@ -288,20 +288,35 @@ fn compile_list(
             }
         }
         Value::Symbol(i) if i == if_ => {
-            let mut cdr_i = cdr.iter();
+            let mut temp_state = CompileState {
+                symbols: state.symbols.clone(),
+                chunk: Chunk::new(state.chunk.file_name, line),
+            };
             let mut end_patches = Vec::new();
-            //if let Some(r) = cdr_i.next() {
-            //    compile(vm, state, *r, result)?;
-            //}
+            let mut cdr_i = cdr.iter();
             while let Some(r) = cdr_i.next() {
                 compile(vm, state, *r, result)?;
-                state.chunk.encode2(JMPFF, result as u16, 0, line)?;
-                let patch = state.chunk.code.len();
                 if let Some(r) = cdr_i.next() {
+                    temp_state.chunk.code.clear();
+                    compile(vm, &mut temp_state, *r, result)?;
+                    temp_state.chunk.encode1(JMPF, 256, line)?; // Force wide for constant size.
+                    state.chunk.encode2(
+                        JMPFF,
+                        result as u16,
+                        temp_state.chunk.code.len() as u16,
+                        line,
+                    )?;
                     compile(vm, state, *r, result)?;
-                    state.chunk.encode1(JMPF, result as u16, line)?;
+                    state.chunk.encode1(JMPF, 256, line)?; // Force wide for constant size.
                     end_patches.push(state.chunk.code.len());
                 }
+            }
+            let end_ip = state.chunk.code.len();
+            for i in end_patches {
+                let f = (end_ip - i) as u16;
+                // XXX TODO, if less then u8 then remove WIDE and pad with NOP
+                state.chunk.code[i - 2] = ((f & 0xFF00) >> 8) as u8;
+                state.chunk.code[i - 1] = (f & 0x00FF) as u8;
             }
         }
         Value::Symbol(i) if i == do_ => {
@@ -509,6 +524,17 @@ fn compile(vm: &mut Vm, state: &mut CompileState, exp: Value, result: usize) -> 
                 state.chunk.encode_refi(result as u16, const_i, line)?;
             }
         }
+        Value::True => state.chunk.encode1(MREGT, result as u16, line)?,
+        Value::False => state.chunk.encode1(MREGF, result as u16, line)?,
+        Value::Nil => state.chunk.encode1(MREGN, result as u16, line)?,
+        Value::Undefined => state.chunk.encode1(MREGC, result as u16, line)?,
+        Value::Byte(i) => state.chunk.encode2(MREGB, result as u16, i as u16, line)?,
+        Value::Int(i) if i >= 0 && i <= u16::MAX as i64 => {
+            state.chunk.encode2(MREGI, result as u16, i as u16, line)?
+        }
+        Value::UInt(i) if i <= u16::MAX as u64 => {
+            state.chunk.encode2(MREGU, result as u16, i as u16, line)?
+        }
         _ => {
             let const_i = state.chunk.add_constant(exp);
             state
@@ -553,6 +579,13 @@ fn main() {
     (prn \"am i 15? \" (* 3 5))
     (prn \"am i 30? \" (* 3 5 2))
     (prn \"am i 3? \" (/ 15 5))
+    (if nil (prn \"nil is true\")(prn \"nil is false\"))
+    (if () (prn \"() is true\")(prn \"() is false\"))
+    (if #f (prn \"#f is true\")(prn \"#f is false\"))
+    (if #t (prn \"#t is true\")(prn \"#t is false\"))
+    (if true (prn \"true is true\")(prn \"true is false\"))
+    (if 0 (prn \"0 is true\")(prn \"0 is false\"))
+    (if (+ 1 3) (prn \"(+ 1 3) is true\")(prn \"(+ 1 3) is false\"))
     )";
     let exp = read(&mut vm, &mut reader_state, txt, None, false).unwrap();
     compile(&mut vm, &mut state, exp, 0).unwrap();
