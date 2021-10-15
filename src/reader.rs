@@ -522,7 +522,7 @@ fn do_atom(
             Err(_) => {
                 let potential_float: Result<f64, ParseFloatError> = num_str.parse();
                 match potential_float {
-                    Ok(v) => Value::Float(v),
+                    Ok(v) => Value::float(v),
                     Err(_) => Value::Symbol(vm.intern(symbol)),
                 }
             }

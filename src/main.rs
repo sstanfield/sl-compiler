@@ -1,142 +1,15 @@
-use std::cell::RefCell;
-use std::collections::HashMap;
+use std::env;
+use std::ffi::OsString;
 use std::rc::Rc;
 
-use slvm::chunk::*;
 use slvm::error::*;
 use slvm::heap::*;
-use slvm::interner::*;
 use slvm::opcodes::*;
 use slvm::value::*;
 use slvm::vm::*;
 
 use sl_compiler::reader::*;
-
-#[derive(Clone, Debug)]
-pub struct SymbolsInt {
-    pub syms: HashMap<Interned, usize, BuildInternedHasher>,
-    count: usize,
-}
-
-impl SymbolsInt {
-    pub fn add_sym(&mut self, sym: Interned) {
-        self.syms.insert(sym, self.count);
-        self.count += 1;
-    }
-}
-
-// symbol name, idx/reg for scope, idx/reg for outer scope
-type Captures = Rc<RefCell<Vec<(Interned, usize, usize)>>>;
-
-#[derive(Clone, Debug)]
-pub struct Symbols {
-    pub data: Rc<RefCell<SymbolsInt>>,
-    outer: Option<Rc<RefCell<Symbols>>>,
-    //namespace: Rc<RefCell<Namespace>>,
-    captures: Captures,
-}
-
-impl Symbols {
-    pub fn with_outer(outer: Option<Rc<RefCell<Symbols>>>) -> Symbols {
-        let data = Rc::new(RefCell::new(SymbolsInt {
-            syms: HashMap::with_hasher(BuildInternedHasher::new()),
-            count: 0,
-        }));
-        Symbols {
-            data,
-            outer,
-            //namespace,
-            captures: Rc::new(RefCell::new(Vec::new())),
-        }
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.data.borrow().syms.is_empty()
-    }
-
-    pub fn len(&self) -> usize {
-        self.data.borrow().syms.len()
-    }
-
-    pub fn contains_symbol(&self, key: Interned) -> bool {
-        self.data.borrow().syms.contains_key(&key)
-    }
-
-    pub fn can_capture(&self, key: Interned) -> bool {
-        let mut loop_outer = self.outer.clone();
-        while let Some(outer) = loop_outer {
-            let outer = outer.borrow();
-            if outer.contains_symbol(key) {
-                return true;
-            }
-            loop_outer = outer.outer.clone();
-        }
-        false
-    }
-
-    pub fn get_capture_binding(&self, key: Interned) -> Option<usize> {
-        for cap in &*self.captures.borrow() {
-            if cap.0 == key {
-                return Some(cap.2);
-            }
-        }
-        None
-    }
-
-    pub fn get(&self, key: Interned) -> Option<usize> {
-        self.data.borrow().syms.get(&key).copied()
-    }
-
-    pub fn clear(&mut self) {
-        self.data.borrow_mut().syms.clear();
-    }
-
-    pub fn insert(&mut self, key: Interned) -> usize {
-        let mut data = self.data.borrow_mut();
-        let count = data.count;
-        data.syms.insert(key, count);
-        data.count += 1;
-        count
-    }
-
-    pub fn insert_capture(&self, vm: &mut Vm, key: Interned) -> Option<usize> {
-        if let Some(idx) = self.data.borrow().syms.get(&key) {
-            Some(*idx)
-        } else {
-            if let Some(outer) = &self.outer {
-                // Also capture in outer lexical scope or bad things can happen.
-                if let Some(outer_idx) = outer.borrow().insert_capture(vm, key) {
-                    let mut data = self.data.borrow_mut();
-                    let count = data.count;
-                    data.syms.insert(key, count);
-                    data.count += 1;
-                    self.captures.borrow_mut().push((key, count, outer_idx));
-                    return Some(count);
-                }
-            }
-            None
-        }
-    }
-
-    pub fn len_captures(&self) -> usize {
-        self.captures.borrow().len()
-    }
-}
-
-struct CompileState {
-    symbols: Rc<RefCell<Symbols>>,
-    chunk: Chunk,
-}
-
-impl CompileState {
-    pub fn reserved_regs(&self) -> usize {
-        self.symbols.borrow().len() + 1
-    }
-
-    pub fn get_symbol(&self, sym: Interned) -> Option<usize> {
-        self.symbols.borrow().data.borrow().syms.get(&sym).copied()
-    }
-}
+use sl_compiler::state::*;
 
 fn pr(vm: &mut Vm, registers: &[Value]) -> VMResult<Value> {
     for v in registers {
@@ -162,7 +35,7 @@ fn compile_call(
     line: u32,
 ) -> VMResult<()> {
     let b_reg = result + cdr.len() + 1;
-    let const_i = state.chunk.add_constant(callable);
+    let const_i = state.add_constant(callable);
     for (i, r) in cdr.iter().enumerate() {
         compile(vm, state, *r, result + i + 1)?;
     }
@@ -217,47 +90,66 @@ fn compile_fn(
     result: usize,
     line: u32,
 ) -> VMResult<()> {
-    if let Value::Reference(h) = args {
-        let obj = vm.get(h);
-        let args_iter = match obj {
-            Object::Pair(_car, _cdr) => args.iter(vm),
-            Object::Vector(_v) => args.iter(vm),
-            _ => {
-                return Err(VMError::new_compile(format!(
-                    "Malformed fn, invalid args, {:?}.",
-                    obj
-                )));
+    let mut new_state = match args {
+        Value::Reference(h) => {
+            let obj = vm.get(h);
+            let args_iter = match obj {
+                Object::Pair(_car, _cdr) => args.iter(vm),
+                Object::Vector(_v) => args.iter(vm),
+                _ => {
+                    return Err(VMError::new_compile(format!(
+                        "Malformed fn, invalid args, {:?}.",
+                        obj
+                    )));
+                }
+            };
+            let new_state =
+                CompileState::new_state(state.chunk.file_name, line, state.symbols.clone());
+            for a in args_iter {
+                if let Value::Symbol(i) = a {
+                    new_state.symbols.borrow_mut().data.borrow_mut().add_sym(i);
+                } else {
+                    return Err(VMError::new_compile(
+                        "Malformed fn, invalid args, must be symbols.",
+                    ));
+                }
             }
-        };
-        let symbols = Symbols::with_outer(Some(state.symbols.clone()));
-        for a in args_iter {
-            if let Value::Symbol(i) = a {
-                symbols.data.borrow_mut().add_sym(i);
-            } else {
-                return Err(VMError::new_compile(
-                    "Malformed fn, invalid args, must be symbols.",
-                ));
-            }
+            new_state
         }
-        let mut new_state = CompileState {
-            symbols: Rc::new(RefCell::new(symbols)),
-            chunk: Chunk::new("no_file", 1),
-        };
-        let reserved = new_state.reserved_regs();
-        for r in cdr.iter() {
-            compile(vm, &mut new_state, *r, reserved)?;
+        Value::Nil => CompileState::new_state(state.chunk.file_name, line, state.symbols.clone()),
+        _ => {
+            return Err(VMError::new_compile(format!(
+                "Malformed fn, invalid args, {:?}.",
+                args
+            )))
         }
-        new_state.chunk.encode1(SRET, reserved as u16, 1).unwrap();
-        let lambda = Value::Reference(vm.alloc(Object::Lambda(Rc::new(new_state.chunk))));
-        let const_i = state.chunk.add_constant(lambda);
+    };
+    for r in cdr.iter() {
+        pass1(vm, &mut new_state, *r).unwrap();
+    }
+    let reserved = new_state.reserved_regs();
+    for r in cdr.iter() {
+        compile(vm, &mut new_state, *r, reserved)?;
+    }
+    new_state.chunk.encode1(SRET, reserved as u16, 1).unwrap();
+    let mut closure = false;
+    if !new_state.symbols.borrow().captures.borrow().is_empty() {
+        let mut caps = Vec::new();
+        for (_, _, c) in new_state.symbols.borrow().captures.borrow().iter() {
+            caps.push((*c + 1) as u32);
+        }
+        new_state.chunk.captures = Some(caps);
+        closure = true;
+    }
+    let lambda = Value::Reference(vm.alloc(Object::Lambda(Rc::new(new_state.chunk))));
+    let const_i = state.add_constant(lambda);
+    state
+        .chunk
+        .encode2(CONST, result as u16, const_i as u16, line)?;
+    if closure {
         state
             .chunk
-            .encode2(CONST, result as u16, const_i as u16, line)?;
-    } else {
-        return Err(VMError::new_compile(format!(
-            "Malformed fn, invalid args, {:?}.",
-            args
-        )));
+            .encode2(CLOSE, result as u16, result as u16, line)?;
     }
     Ok(())
 }
@@ -278,6 +170,8 @@ fn compile_list(
     let sub = vm.intern("-");
     let mul = vm.intern("*");
     let div = vm.intern("/");
+    let inc = vm.intern("inc!");
+    let dec = vm.intern("dec!");
     let line = 1;
     match car {
         Value::Symbol(i) if i == fn_ => {
@@ -288,10 +182,7 @@ fn compile_list(
             }
         }
         Value::Symbol(i) if i == if_ => {
-            let mut temp_state = CompileState {
-                symbols: state.symbols.clone(),
-                chunk: Chunk::new(state.chunk.file_name, line),
-            };
+            let mut temp_state = CompileState::new_temp(state, line);
             let mut end_patches = Vec::new();
             let mut cdr_i = cdr.iter();
             while let Some(r) = cdr_i.next() {
@@ -363,6 +254,66 @@ fn compile_list(
                 return Err(VMError::new_compile("set!: malformed"));
             }
         }
+        Value::Symbol(i) if i == inc => {
+            let dest = if let Value::Symbol(si) = cdr[0] {
+                if let Some(idx) = state.get_symbol(si) {
+                    idx + 1
+                } else {
+                    let const_i = vm.reserve_index(si);
+                    state.chunk.encode_refi(result as u16, const_i, line)?;
+                    result
+                }
+            } else {
+                return Err(VMError::new_compile("inc!: expected symbol"));
+            };
+            if cdr.len() == 1 {
+                state.chunk.encode2(INC, dest as u16, 1, line)?;
+            } else if cdr.len() == 2 {
+                let amount = match cdr[1] {
+                    Value::Byte(i) => i as u16,
+                    Value::Int(i) if i >= 0 && i <= u16::MAX as i64 => i as u16,
+                    Value::Int(_) => return Err(VMError::new_compile("inc!: second arg to large")),
+                    Value::UInt(i) if i <= u16::MAX as u64 => i as u16,
+                    Value::UInt(_) => {
+                        return Err(VMError::new_compile("inc!: second arg < 0 or to large"))
+                    }
+                    _ => return Err(VMError::new_compile("inc!: second arg must be integer")),
+                };
+                state.chunk.encode2(INC, dest as u16, amount, line)?;
+            } else {
+                return Err(VMError::new_compile("inc!: malformed"));
+            }
+        }
+        Value::Symbol(i) if i == dec => {
+            let dest = if let Value::Symbol(si) = cdr[0] {
+                if let Some(idx) = state.get_symbol(si) {
+                    idx + 1
+                } else {
+                    let const_i = vm.reserve_index(si);
+                    state.chunk.encode_refi(result as u16, const_i, line)?;
+                    result
+                }
+            } else {
+                return Err(VMError::new_compile("dec!: expected symbol"));
+            };
+            if cdr.len() == 1 {
+                state.chunk.encode2(DEC, dest as u16, 1, line)?;
+            } else if cdr.len() == 2 {
+                let amount = match cdr[1] {
+                    Value::Byte(i) => i as u16,
+                    Value::Int(i) if i >= 0 && i <= u16::MAX as i64 => i as u16,
+                    Value::Int(_) => return Err(VMError::new_compile("inc!: second arg to large")),
+                    Value::UInt(i) if i <= u16::MAX as u64 => i as u16,
+                    Value::UInt(_) => {
+                        return Err(VMError::new_compile("inc!: second arg < 0 or to large"))
+                    }
+                    _ => return Err(VMError::new_compile("inc!: second arg must be integer")),
+                };
+                state.chunk.encode2(DEC, dest as u16, amount, line)?;
+            } else {
+                return Err(VMError::new_compile("dec!: malformed"));
+            }
+        }
         Value::Symbol(i) if i == add => {
             if cdr.is_empty() {
                 compile(vm, state, Value::Int(0), result)?;
@@ -394,7 +345,7 @@ fn compile_list(
                 if let Ok(i) = cdr[0].get_int() {
                     compile(vm, state, Value::Int(-i), result)?;
                 } else if let Ok(f) = cdr[0].get_float() {
-                    compile(vm, state, Value::Float(-f), result)?;
+                    compile(vm, state, Value::float(-f), result)?;
                 }
             } else {
                 for (i, v) in cdr.iter().enumerate() {
@@ -485,6 +436,48 @@ fn compile_list(
     Ok(())
 }
 
+fn pass1(vm: &mut Vm, state: &mut CompileState, exp: Value) -> VMResult<()> {
+    let fn_ = vm.intern("fn");
+    match exp {
+        Value::Reference(h) => match vm.get(h).clone() {
+            Object::Pair(car, _cdr) => {
+                // short circuit on an fn form, will be handled with it's own state.
+                if let Value::Symbol(i) = car {
+                    if i == fn_ {
+                        return Ok(());
+                    }
+                }
+                // XXX boo on this collect.
+                for r in exp.iter(vm).collect::<Vec<Value>>() {
+                    pass1(vm, state, r)?;
+                }
+            }
+            Object::Vector(v) => {
+                for r in v {
+                    pass1(vm, state, r)?;
+                }
+            }
+            _ => {}
+        },
+        Value::Symbol(i) => {
+            if state.get_symbol(i).is_none() && state.symbols.borrow().can_capture(i) {
+                state.symbols.borrow_mut().insert_capture(vm, i);
+            }
+        }
+        Value::True => {}
+        Value::False => {}
+        Value::Nil => {}
+        Value::Undefined => {}
+        Value::Byte(_) => {}
+        Value::Int(i) if i >= 0 && i <= u16::MAX as i64 => {}
+        Value::UInt(i) if i <= u16::MAX as u64 => {}
+        _ => {
+            state.add_constant(exp);
+        }
+    }
+    Ok(())
+}
+
 fn compile(vm: &mut Vm, state: &mut CompileState, exp: Value, result: usize) -> VMResult<()> {
     // Need to break the cdr lifetime away from the vm for a call or we have
     // to reallocate stuff for no reason.
@@ -536,7 +529,7 @@ fn compile(vm: &mut Vm, state: &mut CompileState, exp: Value, result: usize) -> 
             state.chunk.encode2(MREGU, result as u16, i as u16, line)?
         }
         _ => {
-            let const_i = state.chunk.add_constant(exp);
+            let const_i = state.add_constant(exp);
             state
                 .chunk
                 .encode2(CONST, result as u16, const_i as u16, line)?;
@@ -550,44 +543,11 @@ fn main() {
     vm.set_global("pr", Value::Builtin(CallFunc { func: pr }));
     vm.set_global("prn", Value::Builtin(CallFunc { func: prn }));
     let mut reader_state = ReaderState::new();
-    let mut state = CompileState {
-        symbols: Rc::new(RefCell::new(Symbols::with_outer(None))),
-        chunk: Chunk::new("no_file", 1),
-    };
-    let txt = "(do
-    (pr \"Hello World!\n\")
-    (prn \"hello: \"(def xxx (def yyy (+ 3 2))))
-    (def fn1 (fn (a) (prn \"FUNC\" a)(prn (a 10))))
-    (fn1 (fn (x) (set! x (+ x 2))(+ x 1)))
-    (def fn2 (fn (x y) (set! x (+ x 1))(set! y (+ y 1))(+ x y)))
-    (prn \"am i 7? \" (fn2 2 3))
-    (def xx 5)(prn \"xx: \" xx)
-    (def fn3 (fn (y) (set! xx (+ xx 1))(set! y (+ y 1))(+ xx y)))
-    (prn \"am i 10? \" (fn3 3) \" \" xx)
-    (prn \"xx: \" xx)
-    (def xx 7)(prn \"xx: \" xx)
-    (prn \"am i 10? \" (fn3 3) \" \" xx)
-    (prn \"am i 15? \" (+ 10 3 2))
-    (prn \"am i 12? \" (+ 12))
-    (prn \"am i 0? \" (+))
-    (prn \"am i -5? \" (- 5))
-    (prn \"am i 1? \" (- 9 8))
-    (prn \"am i 0? \" (- 9 8 1))
-    (prn \"am i 1? \" (*))
-    (prn \"am i 5? \" (* 5))
-    (prn \"am i 15? \" (* 3 5))
-    (prn \"am i 15? \" (* 3 5))
-    (prn \"am i 30? \" (* 3 5 2))
-    (prn \"am i 3? \" (/ 15 5))
-    (if nil (prn \"nil is true\")(prn \"nil is false\"))
-    (if () (prn \"() is true\")(prn \"() is false\"))
-    (if #f (prn \"#f is true\")(prn \"#f is false\"))
-    (if #t (prn \"#t is true\")(prn \"#t is false\"))
-    (if true (prn \"true is true\")(prn \"true is false\"))
-    (if 0 (prn \"0 is true\")(prn \"0 is false\"))
-    (if (+ 1 3) (prn \"(+ 1 3) is true\")(prn \"(+ 1 3) is false\"))
-    )";
-    let exp = read(&mut vm, &mut reader_state, txt, None, false).unwrap();
+    let mut state = CompileState::new();
+    let args: Vec<OsString> = env::args_os().collect();
+    let txt = std::fs::read_to_string(&args[1]).unwrap();
+    let exp = read(&mut vm, &mut reader_state, &txt, None, false).unwrap();
+    pass1(&mut vm, &mut state, exp).unwrap();
     compile(&mut vm, &mut state, exp, 0).unwrap();
     state.chunk.encode0(RET, 1).unwrap();
     println!("Compile: {}", txt);
@@ -597,7 +557,7 @@ fn main() {
     if let Err(err) = vm.execute(chunk) {
         println!("ERROR: {}", err);
         vm.dump_globals();
-        state.chunk.disassemble_chunk(&vm).unwrap();
+        //state.chunk.disassemble_chunk(&vm).unwrap();
     }
     //println!("\n\nPOST exec:\n");
     //vm.dump_globals();
