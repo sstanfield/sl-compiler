@@ -81,15 +81,13 @@ fn compile_call_reg(
     Ok(())
 }
 
-fn compile_fn(
+fn new_state(
     vm: &mut Vm,
     state: &mut CompileState,
     args: Value,
-    cdr: &[Value],
-    result: usize,
     line: &mut u32,
-) -> VMResult<()> {
-    let mut new_state = match args {
+) -> VMResult<CompileState> {
+    match args {
         Value::Reference(h) => {
             let obj = vm.get(h);
             let args_iter = match obj {
@@ -118,18 +116,31 @@ fn compile_fn(
                     ));
                 }
             }
-            new_state
+            Ok(new_state)
         }
-        Value::Nil => {
-            CompileState::new_state(state.chunk.file_name, *line, Some(state.symbols.clone()))
-        }
+        Value::Nil => Ok(CompileState::new_state(
+            state.chunk.file_name,
+            *line,
+            Some(state.symbols.clone()),
+        )),
         _ => {
             return Err(VMError::new_compile(format!(
                 "Malformed fn, invalid args, {:?}.",
                 args
             )))
         }
-    };
+    }
+}
+
+fn compile_fn(
+    vm: &mut Vm,
+    state: &mut CompileState,
+    args: Value,
+    cdr: &[Value],
+    result: usize,
+    line: &mut u32,
+) -> VMResult<()> {
+    let mut new_state = new_state(vm, state, args, line)?;
     for r in cdr.iter() {
         pass1(vm, &mut new_state, *r).unwrap();
     }
@@ -163,6 +174,34 @@ fn compile_fn(
     Ok(())
 }
 
+fn compile_macro(
+    vm: &mut Vm,
+    state: &mut CompileState,
+    args: Value,
+    cdr: &[Value],
+    result: usize,
+    line: &mut u32,
+) -> VMResult<()> {
+    let mut new_state = new_state(vm, state, args, line)?;
+    for r in cdr.iter() {
+        pass1(vm, &mut new_state, *r).unwrap();
+    }
+    let reserved = new_state.reserved_regs();
+    for r in cdr.iter() {
+        compile(vm, &mut new_state, *r, reserved, line)?;
+    }
+    new_state
+        .chunk
+        .encode1(SRET, reserved as u16, *line)
+        .unwrap();
+    let mac = Value::Reference(vm.alloc(Object::Macro(Rc::new(new_state.chunk))));
+    let const_i = state.add_constant(mac);
+    state
+        .chunk
+        .encode2(CONST, result as u16, const_i as u16, *line)?;
+    Ok(())
+}
+
 fn compile_list(
     vm: &mut Vm,
     state: &mut CompileState,
@@ -175,6 +214,7 @@ fn compile_list(
     let set = vm.intern("set!");
     let do_ = vm.intern("do");
     let fn_ = vm.intern("fn");
+    let mac_ = vm.intern("macro");
     let if_ = vm.intern("if");
     let add = vm.intern("+");
     let sub = vm.intern("-");
@@ -182,12 +222,20 @@ fn compile_list(
     let div = vm.intern("/");
     let inc = vm.intern("inc!");
     let dec = vm.intern("dec!");
+    let list = vm.intern("list");
     match car {
         Value::Symbol(i) if i == fn_ => {
             if cdr.len() > 1 {
                 compile_fn(vm, state, cdr[0], &cdr[1..], result, line)?
             } else {
                 return Err(VMError::new_compile("Malformed fn form."));
+            }
+        }
+        Value::Symbol(i) if i == mac_ => {
+            if cdr.len() > 1 {
+                compile_macro(vm, state, cdr[0], &cdr[1..], result, line)?
+            } else {
+                return Err(VMError::new_compile("Malformed macro form."));
             }
         }
         Value::Symbol(i) if i == if_ => {
@@ -417,6 +465,20 @@ fn compile_list(
                 }
             }
         }
+        Value::Symbol(i) if i == list => {
+            let mut max = 0;
+            for r in cdr {
+                compile(vm, state, *r, result + max + 1, line)?;
+                max += 1;
+            }
+            state.chunk.encode3(
+                LIST,
+                result as u16,
+                (result + 1) as u16,
+                (result + max + 1) as u16,
+                *line,
+            )?;
+        }
         Value::Symbol(i) => {
             if let Some(idx) = state.get_symbol(i) {
                 compile_call_reg(vm, state, (idx + 1) as u16, cdr, result, line)?
@@ -424,10 +486,22 @@ fn compile_list(
                 let slot = vm.reserve_index(i);
                 // Is a global so set up a call and will error at runtime if
                 // not callable (dynamic is fun).
-                if let Value::Undefined = vm.get_global(slot) {
+                let global = vm.get_global(slot);
+                if let Value::Undefined = global {
                     eprintln!("Warning: {} not defined.", vm.get_interned(i));
                 }
-                compile_callg(vm, state, slot as u32, cdr, result, line)?
+                let mut mac = None;
+                if let Value::Reference(h) = global {
+                    if let Object::Macro(chunk) = vm.get(h) {
+                        mac = Some(chunk.clone());
+                    }
+                }
+                if let Some(mac) = mac {
+                    let exp = vm.do_call(mac, cdr)?;
+                    compile(vm, state, exp, result, line)?
+                } else {
+                    compile_callg(vm, state, slot as u32, cdr, result, line)?
+                }
             }
         }
         Value::Builtin(builtin) => {
@@ -467,12 +541,13 @@ fn compile_list(
 
 fn pass1(vm: &mut Vm, state: &mut CompileState, exp: Value) -> VMResult<()> {
     let fn_ = vm.intern("fn");
+    let mac_ = vm.intern("macro");
     match exp {
         Value::Reference(h) => match vm.get(h).clone() {
             Object::Pair(car, _cdr, _) => {
                 // short circuit on an fn form, will be handled with it's own state.
                 if let Value::Symbol(i) = car {
-                    if i == fn_ {
+                    if i == fn_ || i == mac_ {
                         return Ok(());
                     }
                 }
