@@ -4,7 +4,7 @@ use std::error::Error;
 use std::fmt;
 use std::num::{ParseFloatError, ParseIntError};
 
-use slvm::heap::Object;
+use slvm::heap::{Meta, Object};
 use slvm::value::*;
 use slvm::vm::*;
 use slvm::Chunk;
@@ -39,7 +39,6 @@ impl fmt::Display for ReadError {
 pub struct ReaderState {
     pub line: usize,
     pub column: usize,
-    pub file_name: Option<&'static str>,
     pub clear_state: bool,
     pub in_read: bool,
 }
@@ -50,7 +49,6 @@ impl ReaderState {
     }
 
     pub fn clear(&mut self) {
-        self.file_name = None;
         self.column = 0;
         self.line = 1;
         self.clear_state = false;
@@ -61,7 +59,6 @@ impl ReaderState {
 impl Default for ReaderState {
     fn default() -> Self {
         ReaderState {
-            file_name: None,
             column: 0,
             line: 1,
             clear_state: false,
@@ -727,7 +724,7 @@ fn read_vector(
 fn get_unquote_lst(vm: &mut Vm, exp: Value) -> Option<Value> {
     if let Value::Reference(h) = exp {
         let uq = vm.intern("unquote");
-        if let Object::Pair(Value::Symbol(si), cdr) = vm.get(h) {
+        if let Object::Pair(Value::Symbol(si), cdr, _) = vm.get(h) {
             if *si == uq {
                 return Some(*cdr);
             }
@@ -752,7 +749,7 @@ fn is_unquote_splice(vm: &mut Vm, exp: Value) -> bool {
     }
     if let Value::Reference(h) = exp {
         let car = match vm.get(h) {
-            Object::Pair(car, _) => *car,
+            Object::Pair(car, _, _) => *car,
             Object::Vector(v) => {
                 if let Some(car) = v.get(0) {
                     *car
@@ -777,11 +774,10 @@ fn read_list(
 ) -> Result<(Value, CharIter), (ReadError, CharIter)> {
     let mut head = Value::Nil;
     let mut tail = Value::Nil;
-    /*let meta = get_meta(
-        environment.reader_state.file_name,
-        environment.reader_state.line,
-        environment.reader_state.column,
-    );*/
+    let meta = Meta {
+        line: reader_state.line as u32,
+        col: reader_state.column as u16,
+    };
     let mut cont = true;
     let mut dot = false;
     let mut dot_count = 0;
@@ -818,7 +814,7 @@ fn read_list(
                         ichars,
                     ));
                 }
-                head = Value::Reference(vm.alloc(Object::Pair(exp, Value::Nil)));
+                head = Value::Reference(vm.alloc(Object::Pair(exp, Value::Nil, Some(meta))));
                 tail = head;
             } else if dot {
                 if is_unquote_splice(vm, exp) {
@@ -851,14 +847,15 @@ fn read_list(
                     exp
                 };
                 if let Value::Reference(h) = tail {
-                    if let Object::Pair(_, cdr) = vm.get_mut(h) {
+                    if let Object::Pair(_, cdr, _) = vm.get_mut(h) {
                         *cdr = exp;
                     }
                 }
             } else {
-                let new_tail = Value::Reference(vm.alloc(Object::Pair(exp, Value::Nil)));
+                let new_tail =
+                    Value::Reference(vm.alloc(Object::Pair(exp, Value::Nil, Some(meta))));
                 if let Value::Reference(h) = tail {
-                    if let Object::Pair(_, cdr) = vm.get_mut(h) {
+                    if let Object::Pair(_, cdr, _) = vm.get_mut(h) {
                         *cdr = new_tail;
                     }
                 }
@@ -963,6 +960,10 @@ fn read_inner(
             environment.reader_state.line,
             environment.reader_state.column,
         );*/
+        let meta = Meta {
+            line: reader_state.line as u32,
+            col: reader_state.column as u16,
+        };
         match &*ch {
             "\"" => {
                 match read_string(vm, reader_state, chars, buffer, /*str_*/ &read_table) {
@@ -972,10 +973,12 @@ fn read_inner(
             }
             "'" => match read_inner(vm, reader_state, chars, buffer, in_back_quote, false) {
                 Ok((Some(exp), ichars)) => {
-                    let cdr = vm.alloc(Object::Pair(exp, Value::Nil));
-                    let qlist = Value::Reference(
-                        vm.alloc(Object::Pair(Value::Symbol(i_quote), Value::Reference(cdr))),
-                    );
+                    let cdr = vm.alloc(Object::Pair(exp, Value::Nil, Some(meta)));
+                    let qlist = Value::Reference(vm.alloc(Object::Pair(
+                        Value::Symbol(i_quote),
+                        Value::Reference(cdr),
+                        Some(meta),
+                    )));
                     return Ok((Some(qlist), ichars));
                 }
                 Ok((None, ichars)) => {
@@ -992,10 +995,11 @@ fn read_inner(
             },
             "`" => match read_inner(vm, reader_state, chars, buffer, true, false) {
                 Ok((Some(exp), ichars)) => {
-                    let cdr = vm.alloc(Object::Pair(exp, Value::Nil));
+                    let cdr = vm.alloc(Object::Pair(exp, Value::Nil, Some(meta)));
                     let qlist = Value::Reference(vm.alloc(Object::Pair(
                         Value::Symbol(i_backquote),
                         Value::Reference(cdr),
+                        Some(meta),
                     )));
                     return Ok((Some(qlist), ichars));
                 }
@@ -1023,11 +1027,13 @@ fn read_inner(
                 };
                 match read_inner(vm, reader_state, chars, buffer, in_back_quote, false) {
                     Ok((Some(exp), ichars)) => {
-                        let cdr = vm.alloc(Object::Pair(exp, Value::Nil));
+                        let cdr = vm.alloc(Object::Pair(exp, Value::Nil, Some(meta)));
                         return Ok((
-                            Some(Value::Reference(
-                                vm.alloc(Object::Pair(sym, Value::Reference(cdr))),
-                            )),
+                            Some(Value::Reference(vm.alloc(Object::Pair(
+                                sym,
+                                Value::Reference(cdr),
+                                Some(meta),
+                            )))),
                             ichars,
                         ));
                     }
@@ -1144,10 +1150,8 @@ fn read_inner(
                     return Ok((Some(Value::Symbol(vm.intern(")"))), chars));
                 } else {
                     let reason = format!(
-                        "Unexpected ')': {} line {} col {}",
-                        reader_state.file_name.unwrap_or(""),
-                        reader_state.line,
-                        reader_state.column
+                        "Unexpected ')': line {} col {}",
+                        reader_state.line, reader_state.column
                     );
                     return Err((ReadError { reason }, chars));
                 }
@@ -1204,7 +1208,6 @@ pub fn read_form_state(
     if let Some(old_state) = old_state {
         reader_state.line = old_state.line;
         reader_state.column = old_state.column;
-        reader_state.file_name = old_state.file_name;
         reader_state.clear_state = old_state.clear_state;
         reader_state.in_read = old_state.in_read;
     }
@@ -1219,17 +1222,15 @@ pub fn read_form(
     read_form_state(vm, reader_state, chars, false)
 }
 
-pub fn read(
+pub fn read_all(
     vm: &mut Vm,
     reader_state: &mut ReaderState,
     text: &str,
-    file_name: Option<&'static str>,
-    list_only: bool,
-) -> Result<Value, ReadError> {
-    if reader_state.clear_state {
+) -> Result<Vec<Value>, ReadError> {
+    /*if reader_state.clear_state {
         reader_state.clear();
         reader_state.file_name = file_name;
-    }
+    }*/
     let mut buffer = String::new();
     let mut exps = Vec::new();
 
@@ -1272,11 +1273,21 @@ pub fn read(
     //let exp_meta = get_meta(environment.reader_state.file_name, 0, 0);
     reader_state.clear_state = true;
 
+    Ok(exps)
+}
+
+pub fn read(
+    vm: &mut Vm,
+    reader_state: &mut ReaderState,
+    text: &str,
+    list_only: bool,
+) -> Result<Value, ReadError> {
+    let exps = read_all(vm, reader_state, text)?;
     if list_only {
         if exps.len() == 1 {
             match exps[0] {
                 Value::Reference(h) => match vm.get(h) {
-                    Object::Pair(_, _) => Ok(exps[0]),
+                    Object::Pair(_, _, _) => Ok(exps[0]),
                     Object::Vector(_) => Ok(exps[0]),
                     _ => Ok(Value::Reference(vm.alloc(Object::Vector(exps)))),
                 },
@@ -1313,7 +1324,7 @@ mod tests {
                         }
                         output.push(")".to_string());
                     }
-                    Object::Pair(e1, e2) => {
+                    Object::Pair(e1, e2, _) => {
                         if exp.is_proper_list(vm) {
                             output.push("(".to_string());
                             let exps: Vec<Value> = exp.iter(vm).collect();

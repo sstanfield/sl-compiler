@@ -138,9 +138,9 @@ impl CompileState {
     pub fn new_state(
         file_name: &'static str,
         first_line: u32,
-        outer: Rc<RefCell<Symbols>>,
+        outer: Option<Rc<RefCell<Symbols>>>,
     ) -> Self {
-        let symbols = Rc::new(RefCell::new(Symbols::with_outer(Some(outer))));
+        let symbols = Rc::new(RefCell::new(Symbols::with_outer(outer)));
         CompileState {
             symbols,
             constants: HashMap::new(),

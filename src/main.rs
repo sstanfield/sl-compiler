@@ -1,5 +1,3 @@
-use std::env;
-use std::ffi::OsString;
 use std::rc::Rc;
 
 use slvm::error::*;
@@ -8,6 +6,7 @@ use slvm::opcodes::*;
 use slvm::value::*;
 use slvm::vm::*;
 
+use sl_compiler::config::*;
 use sl_compiler::reader::*;
 use sl_compiler::state::*;
 
@@ -32,19 +31,19 @@ fn compile_call(
     callable: Value,
     cdr: &[Value],
     result: usize,
-    line: u32,
+    line: &mut u32,
 ) -> VMResult<()> {
     let b_reg = result + cdr.len() + 1;
     let const_i = state.add_constant(callable);
     for (i, r) in cdr.iter().enumerate() {
-        compile(vm, state, *r, result + i + 1)?;
+        compile(vm, state, *r, result + i + 1, line)?;
     }
     state
         .chunk
-        .encode2(CONST, b_reg as u16, const_i as u16, line)?;
+        .encode2(CONST, b_reg as u16, const_i as u16, *line)?;
     state
         .chunk
-        .encode3(CALL, b_reg as u16, cdr.len() as u16, result as u16, line)?;
+        .encode3(CALL, b_reg as u16, cdr.len() as u16, result as u16, *line)?;
     Ok(())
 }
 
@@ -54,14 +53,14 @@ fn compile_callg(
     global: u32,
     cdr: &[Value],
     result: usize,
-    line: u32,
+    line: &mut u32,
 ) -> VMResult<()> {
     for (i, r) in cdr.iter().enumerate() {
-        compile(vm, state, *r, result + i + 1)?;
+        compile(vm, state, *r, result + i + 1, line)?;
     }
     state
         .chunk
-        .encode_callg(global, cdr.len() as u16, result as u16, line)?;
+        .encode_callg(global, cdr.len() as u16, result as u16, *line)?;
     Ok(())
 }
 
@@ -71,14 +70,14 @@ fn compile_call_reg(
     reg: u16,
     cdr: &[Value],
     result: usize,
-    line: u32,
+    line: &mut u32,
 ) -> VMResult<()> {
     for (i, r) in cdr.iter().enumerate() {
-        compile(vm, state, *r, result + i + 1)?;
+        compile(vm, state, *r, result + i + 1, line)?;
     }
     state
         .chunk
-        .encode3(CALL, reg, cdr.len() as u16, result as u16, line)?;
+        .encode3(CALL, reg, cdr.len() as u16, result as u16, *line)?;
     Ok(())
 }
 
@@ -88,13 +87,18 @@ fn compile_fn(
     args: Value,
     cdr: &[Value],
     result: usize,
-    line: u32,
+    line: &mut u32,
 ) -> VMResult<()> {
     let mut new_state = match args {
         Value::Reference(h) => {
             let obj = vm.get(h);
             let args_iter = match obj {
-                Object::Pair(_car, _cdr) => args.iter(vm),
+                Object::Pair(_car, _cdr, meta) => {
+                    if let Some(meta) = meta {
+                        *line = meta.line as u32;
+                    }
+                    args.iter(vm)
+                }
                 Object::Vector(_v) => args.iter(vm),
                 _ => {
                     return Err(VMError::new_compile(format!(
@@ -104,7 +108,7 @@ fn compile_fn(
                 }
             };
             let new_state =
-                CompileState::new_state(state.chunk.file_name, line, state.symbols.clone());
+                CompileState::new_state(state.chunk.file_name, *line, Some(state.symbols.clone()));
             for a in args_iter {
                 if let Value::Symbol(i) = a {
                     new_state.symbols.borrow_mut().data.borrow_mut().add_sym(i);
@@ -116,7 +120,9 @@ fn compile_fn(
             }
             new_state
         }
-        Value::Nil => CompileState::new_state(state.chunk.file_name, line, state.symbols.clone()),
+        Value::Nil => {
+            CompileState::new_state(state.chunk.file_name, *line, Some(state.symbols.clone()))
+        }
         _ => {
             return Err(VMError::new_compile(format!(
                 "Malformed fn, invalid args, {:?}.",
@@ -129,9 +135,12 @@ fn compile_fn(
     }
     let reserved = new_state.reserved_regs();
     for r in cdr.iter() {
-        compile(vm, &mut new_state, *r, reserved)?;
+        compile(vm, &mut new_state, *r, reserved, line)?;
     }
-    new_state.chunk.encode1(SRET, reserved as u16, 1).unwrap();
+    new_state
+        .chunk
+        .encode1(SRET, reserved as u16, *line)
+        .unwrap();
     let mut closure = false;
     if !new_state.symbols.borrow().captures.borrow().is_empty() {
         let mut caps = Vec::new();
@@ -145,11 +154,11 @@ fn compile_fn(
     let const_i = state.add_constant(lambda);
     state
         .chunk
-        .encode2(CONST, result as u16, const_i as u16, line)?;
+        .encode2(CONST, result as u16, const_i as u16, *line)?;
     if closure {
         state
             .chunk
-            .encode2(CLOSE, result as u16, result as u16, line)?;
+            .encode2(CLOSE, result as u16, result as u16, *line)?;
     }
     Ok(())
 }
@@ -160,6 +169,7 @@ fn compile_list(
     car: Value,
     cdr: &[Value],
     result: usize,
+    line: &mut u32,
 ) -> VMResult<()> {
     let def = vm.intern("def");
     let set = vm.intern("set!");
@@ -172,7 +182,6 @@ fn compile_list(
     let div = vm.intern("/");
     let inc = vm.intern("inc!");
     let dec = vm.intern("dec!");
-    let line = 1;
     match car {
         Value::Symbol(i) if i == fn_ => {
             if cdr.len() > 1 {
@@ -182,23 +191,23 @@ fn compile_list(
             }
         }
         Value::Symbol(i) if i == if_ => {
-            let mut temp_state = CompileState::new_temp(state, line);
+            let mut temp_state = CompileState::new_temp(state, *line);
             let mut end_patches = Vec::new();
             let mut cdr_i = cdr.iter();
             while let Some(r) = cdr_i.next() {
-                compile(vm, state, *r, result)?;
+                compile(vm, state, *r, result, line)?;
                 if let Some(r) = cdr_i.next() {
                     temp_state.chunk.code.clear();
-                    compile(vm, &mut temp_state, *r, result)?;
-                    temp_state.chunk.encode1(JMPF, 256, line)?; // Force wide for constant size.
+                    compile(vm, &mut temp_state, *r, result, line)?;
+                    temp_state.chunk.encode1(JMPF, 256, *line)?; // Force wide for constant size.
                     state.chunk.encode2(
                         JMPFF,
                         result as u16,
                         temp_state.chunk.code.len() as u16,
-                        line,
+                        *line,
                     )?;
-                    compile(vm, state, *r, result)?;
-                    state.chunk.encode1(JMPF, 256, line)?; // Force wide for constant size.
+                    compile(vm, state, *r, result, line)?;
+                    state.chunk.encode1(JMPF, 256, *line)?; // Force wide for constant size.
                     end_patches.push(state.chunk.code.len());
                 }
             }
@@ -212,18 +221,18 @@ fn compile_list(
         }
         Value::Symbol(i) if i == do_ => {
             for r in cdr.iter() {
-                compile(vm, state, *r, result)?;
+                compile(vm, state, *r, result, line)?;
             }
         }
         Value::Symbol(i) if i == def => {
             if cdr.len() == 2 {
                 if let Value::Symbol(si) = cdr[0] {
-                    compile(vm, state, cdr[1], result + 1)?;
+                    compile(vm, state, cdr[1], result + 1, line)?;
                     let si_const = vm.reserve_index(si);
-                    state.chunk.encode_refi(result as u16, si_const, line)?;
+                    state.chunk.encode_refi(result as u16, si_const, *line)?;
                     state
                         .chunk
-                        .encode2(DEF, result as u16, (result + 1) as u16, line)?;
+                        .encode2(DEF, result as u16, (result + 1) as u16, *line)?;
                 } else {
                     return Err(VMError::new_compile("def: expected symbol"));
                 }
@@ -235,17 +244,17 @@ fn compile_list(
             if cdr.len() == 2 {
                 if let Value::Symbol(si) = cdr[0] {
                     if let Some(idx) = state.get_symbol(si) {
-                        compile(vm, state, cdr[1], result)?;
+                        compile(vm, state, cdr[1], result, line)?;
                         state
                             .chunk
-                            .encode2(SET, (idx + 1) as u16, result as u16, line)?;
+                            .encode2(SET, (idx + 1) as u16, result as u16, *line)?;
                     } else {
-                        compile(vm, state, cdr[1], result + 1)?;
+                        compile(vm, state, cdr[1], result + 1, line)?;
                         let si_const = vm.reserve_index(si);
-                        state.chunk.encode_refi(result as u16, si_const, line)?;
+                        state.chunk.encode_refi(result as u16, si_const, *line)?;
                         state
                             .chunk
-                            .encode2(DEF, result as u16, (result + 1) as u16, line)?;
+                            .encode2(DEF, result as u16, (result + 1) as u16, *line)?;
                     }
                 } else {
                     return Err(VMError::new_compile("set!: expected symbol"));
@@ -260,14 +269,14 @@ fn compile_list(
                     idx + 1
                 } else {
                     let const_i = vm.reserve_index(si);
-                    state.chunk.encode_refi(result as u16, const_i, line)?;
+                    state.chunk.encode_refi(result as u16, const_i, *line)?;
                     result
                 }
             } else {
                 return Err(VMError::new_compile("inc!: expected symbol"));
             };
             if cdr.len() == 1 {
-                state.chunk.encode2(INC, dest as u16, 1, line)?;
+                state.chunk.encode2(INC, dest as u16, 1, *line)?;
             } else if cdr.len() == 2 {
                 let amount = match cdr[1] {
                     Value::Byte(i) => i as u16,
@@ -279,7 +288,7 @@ fn compile_list(
                     }
                     _ => return Err(VMError::new_compile("inc!: second arg must be integer")),
                 };
-                state.chunk.encode2(INC, dest as u16, amount, line)?;
+                state.chunk.encode2(INC, dest as u16, amount, *line)?;
             } else {
                 return Err(VMError::new_compile("inc!: malformed"));
             }
@@ -290,14 +299,14 @@ fn compile_list(
                     idx + 1
                 } else {
                     let const_i = vm.reserve_index(si);
-                    state.chunk.encode_refi(result as u16, const_i, line)?;
+                    state.chunk.encode_refi(result as u16, const_i, *line)?;
                     result
                 }
             } else {
                 return Err(VMError::new_compile("dec!: expected symbol"));
             };
             if cdr.len() == 1 {
-                state.chunk.encode2(DEC, dest as u16, 1, line)?;
+                state.chunk.encode2(DEC, dest as u16, 1, *line)?;
             } else if cdr.len() == 2 {
                 let amount = match cdr[1] {
                     Value::Byte(i) => i as u16,
@@ -309,29 +318,29 @@ fn compile_list(
                     }
                     _ => return Err(VMError::new_compile("inc!: second arg must be integer")),
                 };
-                state.chunk.encode2(DEC, dest as u16, amount, line)?;
+                state.chunk.encode2(DEC, dest as u16, amount, *line)?;
             } else {
                 return Err(VMError::new_compile("dec!: malformed"));
             }
         }
         Value::Symbol(i) if i == add => {
             if cdr.is_empty() {
-                compile(vm, state, Value::Int(0), result)?;
+                compile(vm, state, Value::Int(0), result, line)?;
             } else if cdr.len() == 1 {
-                compile(vm, state, cdr[0], result)?;
+                compile(vm, state, cdr[0], result, line)?;
             } else {
                 for (i, v) in cdr.iter().enumerate() {
                     if i > 0 {
-                        compile(vm, state, *v, result + 1)?;
+                        compile(vm, state, *v, result + 1, line)?;
                         state.chunk.encode3(
                             ADDM,
                             result as u16,
                             result as u16,
                             (result + 1) as u16,
-                            line,
+                            *line,
                         )?;
                     } else {
-                        compile(vm, state, *v, result)?;
+                        compile(vm, state, *v, result, line)?;
                     }
                 }
             }
@@ -343,45 +352,45 @@ fn compile_list(
                 ));
             } else if cdr.len() == 1 {
                 if let Ok(i) = cdr[0].get_int() {
-                    compile(vm, state, Value::Int(-i), result)?;
+                    compile(vm, state, Value::Int(-i), result, line)?;
                 } else if let Ok(f) = cdr[0].get_float() {
-                    compile(vm, state, Value::float(-f), result)?;
+                    compile(vm, state, Value::float(-f), result, line)?;
                 }
             } else {
                 for (i, v) in cdr.iter().enumerate() {
                     if i > 0 {
-                        compile(vm, state, *v, result + 1)?;
+                        compile(vm, state, *v, result + 1, line)?;
                         state.chunk.encode3(
                             SUBM,
                             result as u16,
                             result as u16,
                             (result + 1) as u16,
-                            line,
+                            *line,
                         )?;
                     } else {
-                        compile(vm, state, *v, result)?;
+                        compile(vm, state, *v, result, line)?;
                     }
                 }
             }
         }
         Value::Symbol(i) if i == mul => {
             if cdr.is_empty() {
-                compile(vm, state, Value::Int(1), result)?;
+                compile(vm, state, Value::Int(1), result, line)?;
             } else if cdr.len() == 1 {
-                compile(vm, state, cdr[0], result)?;
+                compile(vm, state, cdr[0], result, line)?;
             } else {
                 for (i, v) in cdr.iter().enumerate() {
                     if i > 0 {
-                        compile(vm, state, *v, result + 1)?;
+                        compile(vm, state, *v, result + 1, line)?;
                         state.chunk.encode3(
                             MULM,
                             result as u16,
                             result as u16,
                             (result + 1) as u16,
-                            line,
+                            *line,
                         )?;
                     } else {
-                        compile(vm, state, *v, result)?;
+                        compile(vm, state, *v, result, line)?;
                     }
                 }
             }
@@ -394,16 +403,16 @@ fn compile_list(
             } else {
                 for (i, v) in cdr.iter().enumerate() {
                     if i > 0 {
-                        compile(vm, state, *v, result + 1)?;
+                        compile(vm, state, *v, result + 1, line)?;
                         state.chunk.encode3(
                             DIVM,
                             result as u16,
                             result as u16,
                             (result + 1) as u16,
-                            line,
+                            *line,
                         )?;
                     } else {
-                        compile(vm, state, *v, result)?;
+                        compile(vm, state, *v, result, line)?;
                     }
                 }
             }
@@ -424,11 +433,31 @@ fn compile_list(
         Value::Builtin(builtin) => {
             compile_call(vm, state, Value::Builtin(builtin), cdr, result, line)?
         }
-        Value::Reference(h) => {
-            if let Object::Lambda(_) = vm.get(h) {
-                compile_call(vm, state, Value::Reference(h), cdr, result, line)?
+        Value::Reference(h) => match vm.get(h) {
+            Object::Lambda(_) => compile_call(vm, state, Value::Reference(h), cdr, result, line)?,
+            Object::Pair(ncar, ncdr, meta) => {
+                if let Some(meta) = meta {
+                    *line = meta.line as u32;
+                }
+                let ncdr: Vec<Value> = ncdr.iter(vm).collect();
+                let ncar = *ncar;
+                compile_list(vm, state, ncar, &ncdr[..], result, line)?;
+                compile_call_reg(vm, state, result as u16, cdr, result, line)?
             }
-        }
+            Object::Vector(v) => {
+                if let Some(ncar) = v.get(0) {
+                    let ncar = *ncar;
+                    if v.len() > 1 {
+                        let ncdr = make_vec_cdr(&v[1..]);
+                        compile_list(vm, state, ncar, ncdr, result, line)?;
+                    } else {
+                        compile_list(vm, state, ncar, &[], result, line)?;
+                    }
+                    compile_call_reg(vm, state, result as u16, cdr, result, line)?
+                }
+            }
+            _ => {}
+        },
         _ => {
             println!("Boo");
         }
@@ -440,7 +469,7 @@ fn pass1(vm: &mut Vm, state: &mut CompileState, exp: Value) -> VMResult<()> {
     let fn_ = vm.intern("fn");
     match exp {
         Value::Reference(h) => match vm.get(h).clone() {
-            Object::Pair(car, _cdr) => {
+            Object::Pair(car, _cdr, _) => {
                 // short circuit on an fn form, will be handled with it's own state.
                 if let Value::Symbol(i) = car {
                     if i == fn_ {
@@ -478,30 +507,39 @@ fn pass1(vm: &mut Vm, state: &mut CompileState, exp: Value) -> VMResult<()> {
     Ok(())
 }
 
-fn compile(vm: &mut Vm, state: &mut CompileState, exp: Value, result: usize) -> VMResult<()> {
-    // Need to break the cdr lifetime away from the vm for a call or we have
-    // to reallocate stuff for no reason.
-    // Should be safe because compiling code should not be manupulating values on
-    // the heap (where the underlying vector lives).
-    fn make_vec_cdr(cdr: &[Value]) -> &'static [Value] {
-        unsafe { &*(cdr as *const [Value]) }
-    }
-    let line = 1;
+// Need to break the cdr lifetime away from the vm for a call or we have
+// to reallocate stuff for no reason.
+// Should be safe because compiling code should not be manupulating values on
+// the heap (where the underlying vector lives).
+fn make_vec_cdr(cdr: &[Value]) -> &'static [Value] {
+    unsafe { &*(cdr as *const [Value]) }
+}
+
+fn compile(
+    vm: &mut Vm,
+    state: &mut CompileState,
+    exp: Value,
+    result: usize,
+    line: &mut u32,
+) -> VMResult<()> {
     match exp {
         Value::Reference(h) => match vm.get(h) {
-            Object::Pair(car, cdr) => {
+            Object::Pair(car, cdr, meta) => {
+                if let Some(meta) = meta {
+                    *line = meta.line as u32;
+                }
                 let cdr: Vec<Value> = cdr.iter(vm).collect();
                 let car = *car;
-                compile_list(vm, state, car, &cdr[..], result)?;
+                compile_list(vm, state, car, &cdr[..], result, line)?;
             }
             Object::Vector(v) => {
                 if let Some(car) = v.get(0) {
                     let car = *car;
                     if v.len() > 1 {
                         let cdr = make_vec_cdr(&v[1..]);
-                        compile_list(vm, state, car, cdr, result)?;
+                        compile_list(vm, state, car, cdr, result, line)?;
                     } else {
-                        compile_list(vm, state, car, &[], result)?;
+                        compile_list(vm, state, car, &[], result, line)?;
                     }
                 }
             }
@@ -511,53 +549,88 @@ fn compile(vm: &mut Vm, state: &mut CompileState, exp: Value, result: usize) -> 
             if let Some(idx) = state.get_symbol(i) {
                 state
                     .chunk
-                    .encode2(MOV, result as u16, (idx + 1) as u16, line)?;
+                    .encode2(MOV, result as u16, (idx + 1) as u16, *line)?;
             } else {
                 let const_i = vm.reserve_index(i);
-                state.chunk.encode_refi(result as u16, const_i, line)?;
+                state.chunk.encode_refi(result as u16, const_i, *line)?;
             }
         }
-        Value::True => state.chunk.encode1(MREGT, result as u16, line)?,
-        Value::False => state.chunk.encode1(MREGF, result as u16, line)?,
-        Value::Nil => state.chunk.encode1(MREGN, result as u16, line)?,
-        Value::Undefined => state.chunk.encode1(MREGC, result as u16, line)?,
-        Value::Byte(i) => state.chunk.encode2(MREGB, result as u16, i as u16, line)?,
+        Value::True => state.chunk.encode1(MREGT, result as u16, *line)?,
+        Value::False => state.chunk.encode1(MREGF, result as u16, *line)?,
+        Value::Nil => state.chunk.encode1(MREGN, result as u16, *line)?,
+        Value::Undefined => state.chunk.encode1(MREGC, result as u16, *line)?,
+        Value::Byte(i) => state.chunk.encode2(MREGB, result as u16, i as u16, *line)?,
         Value::Int(i) if i >= 0 && i <= u16::MAX as i64 => {
-            state.chunk.encode2(MREGI, result as u16, i as u16, line)?
+            state.chunk.encode2(MREGI, result as u16, i as u16, *line)?
         }
         Value::UInt(i) if i <= u16::MAX as u64 => {
-            state.chunk.encode2(MREGU, result as u16, i as u16, line)?
+            state.chunk.encode2(MREGU, result as u16, i as u16, *line)?
         }
         _ => {
             let const_i = state.add_constant(exp);
             state
                 .chunk
-                .encode2(CONST, result as u16, const_i as u16, line)?;
+                .encode2(CONST, result as u16, const_i as u16, *line)?;
         }
     }
     Ok(())
 }
 
 fn main() {
+    let config = if let Some(c) = get_config() {
+        c
+    } else {
+        return;
+    };
     let mut vm = Vm::new();
     vm.set_global("pr", Value::Builtin(CallFunc { func: pr }));
     vm.set_global("prn", Value::Builtin(CallFunc { func: prn }));
     let mut reader_state = ReaderState::new();
-    let mut state = CompileState::new();
-    let args: Vec<OsString> = env::args_os().collect();
-    let txt = std::fs::read_to_string(&args[1]).unwrap();
-    let exp = read(&mut vm, &mut reader_state, &txt, None, false).unwrap();
-    pass1(&mut vm, &mut state, exp).unwrap();
-    compile(&mut vm, &mut state, exp, 0).unwrap();
-    state.chunk.encode0(RET, 1).unwrap();
-    println!("Compile: {}", txt);
-    vm.dump_globals();
-    state.chunk.disassemble_chunk(&vm).unwrap();
-    let chunk = Rc::new(state.chunk.clone());
-    if let Err(err) = vm.execute(chunk) {
-        println!("ERROR: {}", err);
+    //let mut state = CompileState::new();
+    let txt = std::fs::read_to_string(&config.script).unwrap();
+    let exps = read_all(&mut vm, &mut reader_state, &txt).unwrap();
+    let mut line = 1;
+    let file_i = vm.intern(&config.script);
+    for exp in exps {
+        if let Value::Reference(h) = exp {
+            if let Object::Pair(_, _, Some(meta)) = vm.get(h) {
+                line = meta.line as u32;
+            }
+        }
+        let mut state = CompileState::new_state(vm.get_interned(file_i), line, None);
+        pass1(&mut vm, &mut state, exp).unwrap();
+        compile(&mut vm, &mut state, exp, 0, &mut line).unwrap();
+        state.chunk.encode0(RET, line).unwrap();
+        if config.dump {
+            state.chunk.disassemble_chunk(&vm, 0).unwrap();
+        }
+        if config.run {
+            let chunk = Rc::new(state.chunk.clone());
+            if let Err(err) = vm.execute(chunk) {
+                println!("ERROR: {}", err);
+                vm.dump_globals();
+                //state.chunk.disassemble_chunk(&vm).unwrap();
+            }
+        }
+    }
+    //state.chunk.encode0(RET, line).unwrap();
+    //println!("Compile: {}", txt);
+    if config.globals_pre {
         vm.dump_globals();
-        //state.chunk.disassemble_chunk(&vm).unwrap();
+    }
+    //if config.dump {
+    //    state.chunk.disassemble_chunk(&vm, 0).unwrap();
+    //}
+    /*    if config.run {
+        let chunk = Rc::new(state.chunk.clone());
+        if let Err(err) = vm.execute(chunk) {
+            println!("ERROR: {}", err);
+            vm.dump_globals();
+            //state.chunk.disassemble_chunk(&vm).unwrap();
+        }
+    }*/
+    if config.globals_post {
+        vm.dump_globals();
     }
     //println!("\n\nPOST exec:\n");
     //vm.dump_globals();
