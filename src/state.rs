@@ -120,22 +120,67 @@ impl Symbols {
     }
 }
 
+pub struct Specials {
+    pub def: Interned,
+    pub set: Interned,
+    pub do_: Interned,
+    pub fn_: Interned,
+    pub mac_: Interned,
+    pub if_: Interned,
+    pub add: Interned,
+    pub sub: Interned,
+    pub mul: Interned,
+    pub div: Interned,
+    pub inc: Interned,
+    pub dec: Interned,
+    pub list: Interned,
+    pub quote: Interned,
+    pub backquote: Interned,
+    pub list_append: Interned,
+}
+
+impl Specials {
+    pub fn new(vm: &mut Vm) -> Self {
+        Self {
+            def: vm.intern("def"),
+            set: vm.intern("set!"),
+            do_: vm.intern("do"),
+            fn_: vm.intern("fn"),
+            mac_: vm.intern("macro"),
+            if_: vm.intern("if"),
+            add: vm.intern("+"),
+            sub: vm.intern("-"),
+            mul: vm.intern("*"),
+            div: vm.intern("/"),
+            inc: vm.intern("inc!"),
+            dec: vm.intern("dec!"),
+            list: vm.intern("list"),
+            quote: vm.intern("quote"),
+            backquote: vm.intern("back-quote"),
+            list_append: vm.intern("list-append"),
+        }
+    }
+}
+
 pub struct CompileState {
     pub symbols: Rc<RefCell<Symbols>>,
     pub constants: HashMap<Value, usize>,
     pub chunk: Chunk,
+    pub specials: Specials,
 }
 
 impl CompileState {
-    pub fn new() -> Self {
+    pub fn new(vm: &mut Vm) -> Self {
         CompileState {
             symbols: Rc::new(RefCell::new(Symbols::with_outer(None))),
             constants: HashMap::new(),
             chunk: Chunk::new("no_file", 1),
+            specials: Specials::new(vm),
         }
     }
 
     pub fn new_state(
+        vm: &mut Vm,
         file_name: &'static str,
         first_line: u32,
         outer: Option<Rc<RefCell<Symbols>>>,
@@ -145,14 +190,16 @@ impl CompileState {
             symbols,
             constants: HashMap::new(),
             chunk: Chunk::new(file_name, first_line),
+            specials: Specials::new(vm),
         }
     }
 
-    pub fn new_temp(state: &CompileState, line: u32) -> Self {
+    pub fn new_temp(vm: &mut Vm, state: &CompileState, line: u32) -> Self {
         CompileState {
             symbols: state.symbols.clone(),
             constants: HashMap::new(),
             chunk: Chunk::new(state.chunk.file_name, line),
+            specials: Specials::new(vm),
         }
     }
 
@@ -172,11 +219,5 @@ impl CompileState {
             self.constants.insert(exp, const_i);
             const_i
         }
-    }
-}
-
-impl Default for CompileState {
-    fn default() -> Self {
-        Self::new()
     }
 }
