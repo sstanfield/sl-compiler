@@ -35,22 +35,22 @@ macro_rules! get_data {
         if let Value::Reference(h) = $exp {
             match $vm.get(h) {
                 Object::Pair(_car, Value::Reference(h), meta) => {
-                        if let Object::Pair(ncar, ncdr, _) = $vm.get(*h) {
-                            if ncdr.is_nil() {
-                                return Ok(*ncar);
+                    if let Object::Pair(ncar, ncdr, _) = $vm.get(*h) {
+                        if ncdr.is_nil() {
+                            return Ok(*ncar);
+                        } else {
+                            if let Some(meta) = meta {
+                                return Err(VMError::new_compile(format!(
+                                    "Invalid tag at {}:{}, takes one expression.",
+                                    meta.line, meta.col
+                                )));
                             } else {
-                                if let Some(meta) = meta {
-                                    return Err(VMError::new_compile(format!(
-                                        "Invalid tag at {}:{}, takes one expression.",
-                                        meta.line, meta.col
-                                    )));
-                                } else {
-                                    return Err(VMError::new_compile(
-                                        "Invalid tag, takes one expression.",
-                                    ));
-                                }
+                                return Err(VMError::new_compile(
+                                    "Invalid tag, takes one expression.",
+                                ));
                             }
                         }
+                    }
                 }
                 Object::Vector(v) => {
                     if v.len() != 2 {
@@ -122,11 +122,7 @@ fn append(vm: &mut Vm, exp1: Value, exp2: Value) -> Value {
     Value::Reference(vm.alloc(Object::Pair(Value::Symbol(q_i), cdr2, None)))
 }
 
-fn qq_expand(
-    vm: &mut Vm,
-    exp: Value,
-    line: &mut u32,
-) -> VMResult<Value> {
+fn qq_expand(vm: &mut Vm, exp: Value, line: &mut u32) -> VMResult<Value> {
     let tag = Tag::new(vm);
     if tag.is_unquote(vm, exp) {
         Ok(Tag::data(vm, exp)?)
@@ -162,11 +158,7 @@ fn qq_expand(
     }
 }
 
-fn qq_expand_list(
-    vm: &mut Vm,
-    exp: Value,
-    line: &mut u32,
-) -> VMResult<Value> {
+fn qq_expand_list(vm: &mut Vm, exp: Value, line: &mut u32) -> VMResult<Value> {
     let tag = Tag::new(vm);
     if tag.is_unquote(vm, exp) {
         let data = Tag::data(vm, exp)?;
