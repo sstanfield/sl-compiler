@@ -19,15 +19,24 @@ fn compile_call(
 ) -> VMResult<()> {
     let b_reg = result + cdr.len() + 1;
     let const_i = state.add_constant(callable);
+    let tail = state.tail;
+    state.tail = false;
+    let result = if tail { 0 } else { result };
     for (i, r) in cdr.iter().enumerate() {
         compile(vm, state, *r, result + i + 1, line)?;
     }
     state
         .chunk
         .encode2(CONST, b_reg as u16, const_i as u16, *line)?;
-    state
-        .chunk
-        .encode3(CALL, b_reg as u16, cdr.len() as u16, result as u16, *line)?;
+    if tail {
+        state
+            .chunk
+            .encode2(TCALL, b_reg as u16, cdr.len() as u16, *line)?;
+    } else {
+        state
+            .chunk
+            .encode3(CALL, b_reg as u16, cdr.len() as u16, result as u16, *line)?;
+    }
     Ok(())
 }
 
@@ -39,12 +48,19 @@ fn compile_callg(
     result: usize,
     line: &mut u32,
 ) -> VMResult<()> {
+    let tail = state.tail;
+    state.tail = false;
+    let result = if tail { 0 } else { result };
     for (i, r) in cdr.iter().enumerate() {
         compile(vm, state, *r, result + i + 1, line)?;
     }
-    state
-        .chunk
-        .encode_callg(global, cdr.len() as u16, result as u16, *line)?;
+    if tail {
+        state.chunk.encode_tcallg(global, cdr.len() as u16, *line)?;
+    } else {
+        state
+            .chunk
+            .encode_callg(global, cdr.len() as u16, result as u16, *line)?;
+    }
     Ok(())
 }
 
@@ -56,12 +72,19 @@ fn compile_call_reg(
     result: usize,
     line: &mut u32,
 ) -> VMResult<()> {
+    let tail = state.tail;
+    state.tail = false;
+    let result = if tail { 0 } else { result };
     for (i, r) in cdr.iter().enumerate() {
         compile(vm, state, *r, result + i + 1, line)?;
     }
-    state
-        .chunk
-        .encode3(CALL, reg, cdr.len() as u16, result as u16, *line)?;
+    if tail {
+        state.chunk.encode2(TCALL, reg, cdr.len() as u16, *line)?;
+    } else {
+        state
+            .chunk
+            .encode3(CALL, reg, cdr.len() as u16, result as u16, *line)?;
+    }
     Ok(())
 }
 
@@ -134,7 +157,11 @@ fn compile_fn(
         pass1(vm, &mut new_state, *r).unwrap();
     }
     let reserved = new_state.reserved_regs();
-    for r in cdr.iter() {
+    let last_thing = cdr.len() - 1;
+    for (i, r) in cdr.iter().enumerate() {
+        if i == last_thing {
+            new_state.tail = true;
+        }
         compile(vm, &mut new_state, *r, reserved, line)?;
     }
     new_state
@@ -150,6 +177,8 @@ fn compile_fn(
         new_state.chunk.captures = Some(caps);
         closure = true;
     }
+    new_state.chunk.input_regs = reserved;
+    new_state.chunk.extra_regs = new_state.max_regs - reserved;
     let lambda = Value::Reference(vm.alloc(Object::Lambda(Rc::new(new_state.chunk))));
     let const_i = state.add_constant(lambda);
     state
@@ -367,11 +396,15 @@ fn compile_if(
     line: &mut u32,
 ) -> VMResult<()> {
     let mut temp_state = CompileState::new_temp(vm, state, *line);
+    let tail = state.tail;
+    state.tail = false;
     let mut end_patches = Vec::new();
     let mut cdr_i = cdr.iter();
     while let Some(r) = cdr_i.next() {
         compile(vm, state, *r, result, line)?;
         if let Some(r) = cdr_i.next() {
+            state.tail = tail;
+            temp_state.tail = tail;
             temp_state.chunk.code.clear();
             compile(vm, &mut temp_state, *r, result, line)?;
             temp_state.chunk.encode1(JMPF, 256, *line)?; // Force wide for constant size.
@@ -384,6 +417,7 @@ fn compile_if(
             compile(vm, state, *r, result, line)?;
             state.chunk.encode1(JMPF, 256, *line)?; // Force wide for constant size.
             end_patches.push(state.chunk.code.len());
+            state.tail = false;
         }
     }
     let end_ip = state.chunk.code.len();
@@ -479,17 +513,26 @@ fn compile_list(
                 compile_if(vm, state, cdr, result, line)?;
             }
             Value::Symbol(i) if i == state.specials.do_ => {
-                for r in cdr.iter() {
+                let last_thing = cdr.len() - 1;
+                let old_tail = state.tail;
+                state.tail = false;
+                for (i, r) in cdr.iter().enumerate() {
+                    if i == last_thing {
+                        state.tail = old_tail;
+                    }
                     compile(vm, state, *r, result, line)?;
                 }
             }
             Value::Symbol(i) if i == state.specials.def => {
+                state.tail = false;
                 compile_def(vm, state, cdr, result, line)?;
             }
             Value::Symbol(i) if i == state.specials.set => {
+                state.tail = false;
                 compile_set(vm, state, cdr, result, line)?;
             }
             Value::Symbol(i) if i == state.specials.list => {
+                state.tail = false;
                 let mut max = 0;
                 for r in cdr {
                     compile(vm, state, *r, result + max + 1, line)?;
@@ -504,6 +547,7 @@ fn compile_list(
                 )?;
             }
             Value::Symbol(i) if i == state.specials.list_append => {
+                state.tail = false;
                 let mut max = 0;
                 for r in cdr {
                     compile(vm, state, *r, result + max + 1, line)?;
@@ -518,6 +562,7 @@ fn compile_list(
                 )?;
             }
             Value::Symbol(i) if i == state.specials.quote => {
+                state.tail = false;
                 if cdr.len() != 1 {
                     return Err(VMError::new_compile(format!(
                         "quote takes one argument, got {}, line {}",
@@ -528,6 +573,7 @@ fn compile_list(
                 mkconst(vm, state, cdr[0], result, line)?;
             }
             Value::Symbol(i) if i == state.specials.backquote => {
+                state.tail = false;
                 if cdr.len() != 1 {
                     return Err(VMError::new_compile(format!(
                         "backquote takes one argument, got {}, line {}",
@@ -689,6 +735,9 @@ pub fn compile(
     result: usize,
     line: &mut u32,
 ) -> VMResult<()> {
+    if state.max_regs < result {
+        state.max_regs = result;
+    }
     match exp {
         Value::Reference(h) => match vm.get(h) {
             Object::Pair(car, cdr, meta) => {

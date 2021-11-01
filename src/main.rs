@@ -70,9 +70,6 @@ fn main() {
         let file_name = vm.get_interned(file_i);
         let mut state = CompileState::new_state(&mut vm, file_name, line, None);
         pass1(&mut vm, &mut state, exp).unwrap();
-        for x in 0..20 {
-            state.chunk.encode1(MREGN, x as u16, line).unwrap();
-        }
         compile(&mut vm, &mut state, exp, 0, &mut line).unwrap();
         state.chunk.encode0(RET, line).unwrap();
         if config.dump {

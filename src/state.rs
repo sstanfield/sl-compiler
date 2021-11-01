@@ -167,6 +167,8 @@ pub struct CompileState {
     pub constants: HashMap<Value, usize>,
     pub chunk: Chunk,
     pub specials: Specials,
+    pub max_regs: usize,
+    pub tail: bool,
 }
 
 impl CompileState {
@@ -176,6 +178,8 @@ impl CompileState {
             constants: HashMap::new(),
             chunk: Chunk::new("no_file", 1),
             specials: Specials::new(vm),
+            max_regs: 0,
+            tail: false,
         }
     }
 
@@ -191,6 +195,8 @@ impl CompileState {
             constants: HashMap::new(),
             chunk: Chunk::new(file_name, first_line),
             specials: Specials::new(vm),
+            max_regs: 0,
+            tail: false,
         }
     }
 
@@ -200,6 +206,8 @@ impl CompileState {
             constants: HashMap::new(),
             chunk: Chunk::new(state.chunk.file_name, line),
             specials: Specials::new(vm),
+            max_regs: state.max_regs,
+            tail: state.tail,
         }
     }
 
