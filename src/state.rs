@@ -137,6 +137,8 @@ pub struct Specials {
     pub quote: Interned,
     pub backquote: Interned,
     pub list_append: Interned,
+    pub recur: Interned,
+    pub this_fn: Interned,
 }
 
 impl Specials {
@@ -158,6 +160,8 @@ impl Specials {
             quote: vm.intern("quote"),
             backquote: vm.intern("back-quote"),
             list_append: vm.intern("list-append"),
+            recur: vm.intern("recur"),
+            this_fn: vm.intern("this-fn"),
         }
     }
 }

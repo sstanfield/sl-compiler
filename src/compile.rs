@@ -88,6 +88,29 @@ fn compile_call_reg(
     Ok(())
 }
 
+fn compile_call_myself(
+    vm: &mut Vm,
+    state: &mut CompileState,
+    cdr: &[Value],
+    result: usize,
+    line: &mut u32,
+) -> VMResult<()> {
+    let tail = state.tail;
+    state.tail = false;
+    let result = if tail { 0 } else { result };
+    for (i, r) in cdr.iter().enumerate() {
+        compile(vm, state, *r, result + i + 1, line)?;
+    }
+    if tail {
+        state.chunk.encode1(TCALLM, cdr.len() as u16, *line)?;
+    } else {
+        state
+            .chunk
+            .encode2(CALLM, cdr.len() as u16, result as u16, *line)?;
+    }
+    Ok(())
+}
+
 fn new_state(
     vm: &mut Vm,
     state: &mut CompileState,
@@ -582,6 +605,18 @@ fn compile_list(
                     )));
                 }
                 backquote(vm, state, cdr[0], result, line)?;
+            }
+            Value::Symbol(i) if i == state.specials.recur => {
+                if !state.tail {
+                    return Err(VMError::new_compile(format!(
+                        "recur not in tail position, line {}",
+                        line
+                    )));
+                }
+                compile_call_myself(vm, state, cdr, result, line)?
+            }
+            Value::Symbol(i) if i == state.specials.this_fn => {
+                compile_call_myself(vm, state, cdr, result, line)?
             }
             Value::Symbol(i) => {
                 if let Some(idx) = state.get_symbol(i) {
