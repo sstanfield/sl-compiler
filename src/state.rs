@@ -139,6 +139,11 @@ pub struct Specials {
     pub list_append: Interned,
     pub recur: Interned,
     pub this_fn: Interned,
+    pub numeq: Interned,
+    pub numlt: Interned,
+    pub numlte: Interned,
+    pub numgt: Interned,
+    pub numgte: Interned,
 }
 
 impl Specials {
@@ -162,6 +167,11 @@ impl Specials {
             list_append: vm.intern("list-append"),
             recur: vm.intern("recur"),
             this_fn: vm.intern("this-fn"),
+            numeq: vm.intern("="),
+            numlt: vm.intern("<"),
+            numlte: vm.intern("<="),
+            numgt: vm.intern(">"),
+            numgte: vm.intern(">="),
         }
     }
 }
