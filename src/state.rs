@@ -140,10 +140,14 @@ pub struct Specials {
     pub recur: Interned,
     pub this_fn: Interned,
     pub numeq: Interned,
+    pub numneq: Interned,
     pub numlt: Interned,
     pub numlte: Interned,
     pub numgt: Interned,
     pub numgte: Interned,
+    pub id: Interned,
+    pub eqv: Interned,
+    pub equal: Interned,
 }
 
 impl Specials {
@@ -168,10 +172,14 @@ impl Specials {
             recur: vm.intern("recur"),
             this_fn: vm.intern("this-fn"),
             numeq: vm.intern("="),
+            numneq: vm.intern("/="),
             numlt: vm.intern("<"),
             numlte: vm.intern("<="),
             numgt: vm.intern(">"),
             numgte: vm.intern(">="),
+            id: vm.intern("id?"),
+            eqv: vm.intern("eqv?"),
+            equal: vm.intern("equal?"),
         }
     }
 }

@@ -243,6 +243,28 @@ fn compile_macro(
     Ok(())
 }
 
+fn make_math_comp(
+    vm: &mut Vm,
+    state: &mut CompileState,
+    cdr: &[Value],
+    result: usize,
+    line: &mut u32,
+    op: u8,
+) -> VMResult<()> {
+    if cdr.len() <= 1 {
+        return Err(VMError::new_compile("Requires at least two arguments."));
+    } else {
+        let mut max = 0;
+        for (i, v) in cdr.iter().enumerate() {
+            max = result + i + 1;
+            compile(vm, state, *v, max, line)?;
+        }
+        state
+            .chunk
+            .encode3(op, result as u16, (result + 1) as u16, max as u16, *line)?;
+    }
+    Ok(())
+}
 fn compile_math(
     vm: &mut Vm,
     state: &mut CompileState,
@@ -407,104 +429,22 @@ fn compile_math(
             }
         }
         Value::Symbol(i) if i == state.specials.numeq => {
-            if cdr.len() <= 1 {
-                return Err(VMError::new_compile(
-                    "Malformed =, requires at least two arguments.",
-                ));
-            } else {
-                let mut max = 0;
-                for (i, v) in cdr.iter().enumerate() {
-                    compile(vm, state, *v, result + i + 1, line)?;
-                    max = i + 1;
-                }
-                state.chunk.encode3(
-                    NUMEQ,
-                    result as u16,
-                    (result + 1) as u16,
-                    (max + 1) as u16,
-                    *line,
-                )?;
-            }
+            make_math_comp(vm, state, cdr, result, line, NUMEQ)?;
+        }
+        Value::Symbol(i) if i == state.specials.numneq => {
+            make_math_comp(vm, state, cdr, result, line, NUMNEQ)?;
         }
         Value::Symbol(i) if i == state.specials.numlt => {
-            if cdr.len() <= 1 {
-                return Err(VMError::new_compile(
-                    "Malformed <, requires at least two arguments.",
-                ));
-            } else {
-                let mut max = 0;
-                for (i, v) in cdr.iter().enumerate() {
-                    compile(vm, state, *v, result + i + 1, line)?;
-                    max = i + 1;
-                }
-                state.chunk.encode3(
-                    NUMLT,
-                    result as u16,
-                    (result + 1) as u16,
-                    (max + 1) as u16,
-                    *line,
-                )?;
-            }
+            make_math_comp(vm, state, cdr, result, line, NUMLT)?;
         }
         Value::Symbol(i) if i == state.specials.numlte => {
-            if cdr.len() <= 1 {
-                return Err(VMError::new_compile(
-                    "Malformed <=, requires at least two arguments.",
-                ));
-            } else {
-                let mut max = 0;
-                for (i, v) in cdr.iter().enumerate() {
-                    compile(vm, state, *v, result + i + 1, line)?;
-                    max = i + 1;
-                }
-                state.chunk.encode3(
-                    NUMLTE,
-                    result as u16,
-                    (result + 1) as u16,
-                    (max + 1) as u16,
-                    *line,
-                )?;
-            }
+            make_math_comp(vm, state, cdr, result, line, NUMLTE)?;
         }
         Value::Symbol(i) if i == state.specials.numgt => {
-            if cdr.len() <= 1 {
-                return Err(VMError::new_compile(
-                    "Malformed >, requires at least two arguments.",
-                ));
-            } else {
-                let mut max = 0;
-                for (i, v) in cdr.iter().enumerate() {
-                    compile(vm, state, *v, result + i + 1, line)?;
-                    max = i + 1;
-                }
-                state.chunk.encode3(
-                    NUMGT,
-                    result as u16,
-                    (result + 1) as u16,
-                    (max + 1) as u16,
-                    *line,
-                )?;
-            }
+            make_math_comp(vm, state, cdr, result, line, NUMGT)?;
         }
         Value::Symbol(i) if i == state.specials.numgte => {
-            if cdr.len() <= 1 {
-                return Err(VMError::new_compile(
-                    "Malformed >=, requires at least two arguments.",
-                ));
-            } else {
-                let mut max = 0;
-                for (i, v) in cdr.iter().enumerate() {
-                    compile(vm, state, *v, result + i + 1, line)?;
-                    max = i + 1;
-                }
-                state.chunk.encode3(
-                    NUMGTE,
-                    result as u16,
-                    (result + 1) as u16,
-                    (max + 1) as u16,
-                    *line,
-                )?;
-            }
+            make_math_comp(vm, state, cdr, result, line, NUMGTE)?;
         }
         _ => return Ok(false),
     }
@@ -717,6 +657,60 @@ fn compile_list(
             }
             Value::Symbol(i) if i == state.specials.this_fn => {
                 compile_call_myself(vm, state, cdr, result, line)?
+            }
+            Value::Symbol(i) if i == state.specials.id => {
+                if cdr.len() <= 1 {
+                    return Err(VMError::new_compile("Requires at least two arguments."));
+                } else {
+                    let mut max = 0;
+                    for (i, v) in cdr.iter().enumerate() {
+                        compile(vm, state, *v, result + i + 1, line)?;
+                        max = result + i + 1;
+                    }
+                    state.chunk.encode3(
+                        ID,
+                        result as u16,
+                        (result + 1) as u16,
+                        max as u16,
+                        *line,
+                    )?;
+                }
+            }
+            Value::Symbol(i) if i == state.specials.eqv => {
+                if cdr.len() <= 1 {
+                    return Err(VMError::new_compile("Requires at least two arguments."));
+                } else {
+                    let mut max = 0;
+                    for (i, v) in cdr.iter().enumerate() {
+                        compile(vm, state, *v, result + i + 1, line)?;
+                        max = result + i + 1;
+                    }
+                    state.chunk.encode3(
+                        EQV,
+                        result as u16,
+                        (result + 1) as u16,
+                        max as u16,
+                        *line,
+                    )?;
+                }
+            }
+            Value::Symbol(i) if i == state.specials.equal => {
+                if cdr.len() <= 1 {
+                    return Err(VMError::new_compile("Requires at least two arguments."));
+                } else {
+                    let mut max = 0;
+                    for (i, v) in cdr.iter().enumerate() {
+                        compile(vm, state, *v, result + i + 1, line)?;
+                        max = result + i + 1;
+                    }
+                    state.chunk.encode3(
+                        EQUAL,
+                        result as u16,
+                        (result + 1) as u16,
+                        max as u16,
+                        *line,
+                    )?;
+                }
             }
             Value::Symbol(i) => {
                 if let Some(idx) = state.get_symbol(i) {
