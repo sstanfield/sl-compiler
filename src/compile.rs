@@ -658,7 +658,7 @@ fn compile_list(
             Value::Symbol(i) if i == state.specials.this_fn => {
                 compile_call_myself(vm, state, cdr, result, line)?
             }
-            Value::Symbol(i) if i == state.specials.id => {
+            Value::Symbol(i) if i == state.specials.eq => {
                 if cdr.len() <= 1 {
                     return Err(VMError::new_compile("Requires at least two arguments."));
                 } else {
@@ -668,7 +668,7 @@ fn compile_list(
                         max = result + i + 1;
                     }
                     state.chunk.encode3(
-                        ID,
+                        EQ,
                         result as u16,
                         (result + 1) as u16,
                         max as u16,

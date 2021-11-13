@@ -145,7 +145,7 @@ pub struct Specials {
     pub numlte: Interned,
     pub numgt: Interned,
     pub numgte: Interned,
-    pub id: Interned,
+    pub eq: Interned,
     pub eqv: Interned,
     pub equal: Interned,
 }
@@ -177,7 +177,7 @@ impl Specials {
             numlte: vm.intern("<="),
             numgt: vm.intern(">"),
             numgte: vm.intern(">="),
-            id: vm.intern("id?"),
+            eq: vm.intern("eq?"),
             eqv: vm.intern("eqv?"),
             equal: vm.intern("equal?"),
         }
