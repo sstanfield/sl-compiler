@@ -265,6 +265,7 @@ fn make_math_comp(
     }
     Ok(())
 }
+
 fn compile_math(
     vm: &mut Vm,
     state: &mut CompileState,
@@ -451,6 +452,170 @@ fn compile_math(
     Ok(true)
 }
 
+fn compile_cons(
+    vm: &mut Vm,
+    state: &mut CompileState,
+    car: Value,
+    cdr: &[Value],
+    result: usize,
+    line: &mut u32,
+) -> VMResult<bool> {
+    match car {
+        Value::Symbol(i) if i == state.specials.list => {
+            state.tail = false;
+            let mut max = 0;
+            for r in cdr {
+                compile(vm, state, *r, result + max + 1, line)?;
+                max += 1;
+            }
+            state.chunk.encode3(
+                LIST,
+                result as u16,
+                (result + 1) as u16,
+                (result + max + 1) as u16,
+                *line,
+            )?;
+        }
+        Value::Symbol(i) if i == state.specials.list_append => {
+            state.tail = false;
+            let mut max = 0;
+            for r in cdr {
+                compile(vm, state, *r, result + max + 1, line)?;
+                max += 1;
+            }
+            state.chunk.encode3(
+                APND,
+                result as u16,
+                (result + 1) as u16,
+                (result + max + 1) as u16,
+                *line,
+            )?;
+        }
+        Value::Symbol(i) if i == state.specials.cons => {
+            state.tail = false;
+            if cdr.len() != 2 {
+                return Err(VMError::new_compile(format!(
+                    "takes two arguments, got {}, line {}",
+                    cdr.len(),
+                    line
+                )));
+            }
+            compile(vm, state, cdr[0], result + 1, line)?;
+            compile(vm, state, cdr[1], result + 2, line)?;
+            state.chunk.encode3(
+                CONS,
+                result as u16,
+                (result + 1) as u16,
+                (result + 2) as u16,
+                *line,
+            )?;
+        }
+        Value::Symbol(i) if i == state.specials.car => {
+            state.tail = false;
+            if cdr.len() != 1 {
+                return Err(VMError::new_compile(format!(
+                    "takes one argument, got {}, line {}",
+                    cdr.len(),
+                    line
+                )));
+            }
+            compile(vm, state, cdr[0], result + 1, line)?;
+            state
+                .chunk
+                .encode2(CAR, result as u16, (result + 1) as u16, *line)?;
+        }
+        Value::Symbol(i) if i == state.specials.cdr => {
+            state.tail = false;
+            if cdr.len() != 1 {
+                return Err(VMError::new_compile(format!(
+                    "takes one argument, got {}, line {}",
+                    cdr.len(),
+                    line
+                )));
+            }
+            compile(vm, state, cdr[0], result + 1, line)?;
+            state
+                .chunk
+                .encode2(CDR, result as u16, (result + 1) as u16, *line)?;
+        }
+        Value::Symbol(i) if i == state.specials.xar => {
+            state.tail = false;
+            if cdr.len() != 2 {
+                return Err(VMError::new_compile(format!(
+                    "takes two arguments, got {}, line {}",
+                    cdr.len(),
+                    line
+                )));
+            }
+            compile(vm, state, cdr[0], result, line)?;
+            compile(vm, state, cdr[1], result + 1, line)?;
+            state
+                .chunk
+                .encode2(XAR, result as u16, (result + 1) as u16, *line)?;
+        }
+        Value::Symbol(i) if i == state.specials.xdr => {
+            state.tail = false;
+            if cdr.len() != 2 {
+                return Err(VMError::new_compile(format!(
+                    "takes two arguments, got {}, line {}",
+                    cdr.len(),
+                    line
+                )));
+            }
+            compile(vm, state, cdr[0], result, line)?;
+            compile(vm, state, cdr[1], result + 1, line)?;
+            state
+                .chunk
+                .encode2(XDR, result as u16, (result + 1) as u16, *line)?;
+        }
+        _ => return Ok(false),
+    }
+    Ok(true)
+}
+
+fn compile_vec(
+    vm: &mut Vm,
+    state: &mut CompileState,
+    car: Value,
+    cdr: &[Value],
+    result: usize,
+    line: &mut u32,
+) -> VMResult<bool> {
+    match car {
+        Value::Symbol(i) if i == state.specials.vec_push => {
+            state.tail = false;
+            if cdr.len() != 2 {
+                return Err(VMError::new_compile(format!(
+                    "takes two arguments, got {}, line {}",
+                    cdr.len(),
+                    line
+                )));
+            }
+            compile(vm, state, cdr[0], result, line)?;
+            compile(vm, state, cdr[1], result + 1, line)?;
+            state
+                .chunk
+                .encode2(VECPSH, result as u16, (result + 1) as u16, *line)?;
+        }
+        Value::Symbol(i) if i == state.specials.vec_pop => {
+            state.tail = false;
+            if cdr.len() != 1 {
+                return Err(VMError::new_compile(format!(
+                    "takes one argument, got {}, line {}",
+                    cdr.len(),
+                    line
+                )));
+            }
+            compile(vm, state, cdr[0], result + 1, line)?;
+            state
+                .chunk
+                .encode2(VECPOP, (result + 1) as u16, result as u16, *line)?;
+        }
+        _ => return Ok(false),
+    }
+    Ok(true)
+}
+
 fn compile_if(
     vm: &mut Vm,
     state: &mut CompileState,
@@ -556,7 +721,10 @@ fn compile_list(
     result: usize,
     line: &mut u32,
 ) -> VMResult<()> {
-    if !compile_math(vm, state, car, cdr, result, line)? {
+    if !(compile_math(vm, state, car, cdr, result, line)?
+        || compile_cons(vm, state, car, cdr, result, line)?
+        || compile_vec(vm, state, car, cdr, result, line)?)
+    {
         match car {
             Value::Symbol(i) if i == state.specials.fn_ => {
                 if cdr.len() > 1 {
@@ -593,36 +761,6 @@ fn compile_list(
             Value::Symbol(i) if i == state.specials.set => {
                 state.tail = false;
                 compile_set(vm, state, cdr, result, line)?;
-            }
-            Value::Symbol(i) if i == state.specials.list => {
-                state.tail = false;
-                let mut max = 0;
-                for r in cdr {
-                    compile(vm, state, *r, result + max + 1, line)?;
-                    max += 1;
-                }
-                state.chunk.encode3(
-                    LIST,
-                    result as u16,
-                    (result + 1) as u16,
-                    (result + max + 1) as u16,
-                    *line,
-                )?;
-            }
-            Value::Symbol(i) if i == state.specials.list_append => {
-                state.tail = false;
-                let mut max = 0;
-                for r in cdr {
-                    compile(vm, state, *r, result + max + 1, line)?;
-                    max += 1;
-                }
-                state.chunk.encode3(
-                    APND,
-                    result as u16,
-                    (result + 1) as u16,
-                    (result + max + 1) as u16,
-                    *line,
-                )?;
             }
             Value::Symbol(i) if i == state.specials.quote => {
                 state.tail = false;
@@ -669,24 +807,6 @@ fn compile_list(
                     }
                     state.chunk.encode3(
                         EQ,
-                        result as u16,
-                        (result + 1) as u16,
-                        max as u16,
-                        *line,
-                    )?;
-                }
-            }
-            Value::Symbol(i) if i == state.specials.eqv => {
-                if cdr.len() <= 1 {
-                    return Err(VMError::new_compile("Requires at least two arguments."));
-                } else {
-                    let mut max = 0;
-                    for (i, v) in cdr.iter().enumerate() {
-                        compile(vm, state, *v, result + i + 1, line)?;
-                        max = result + i + 1;
-                    }
-                    state.chunk.encode3(
-                        EQV,
                         result as u16,
                         (result + 1) as u16,
                         max as u16,
