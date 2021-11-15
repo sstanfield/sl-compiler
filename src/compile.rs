@@ -582,6 +582,21 @@ fn compile_vec(
     line: &mut u32,
 ) -> VMResult<bool> {
     match car {
+        Value::Symbol(i) if i == state.specials.vec => {
+            state.tail = false;
+            let mut max = 0;
+            for r in cdr {
+                compile(vm, state, *r, result + max + 1, line)?;
+                max += 1;
+            }
+            state.chunk.encode3(
+                VEC,
+                result as u16,
+                (result + 1) as u16,
+                (result + max + 1) as u16,
+                *line,
+            )?;
+        }
         Value::Symbol(i) if i == state.specials.vec_push => {
             state.tail = false;
             if cdr.len() != 2 {
@@ -610,6 +625,45 @@ fn compile_vec(
             state
                 .chunk
                 .encode2(VECPOP, (result + 1) as u16, result as u16, *line)?;
+        }
+        Value::Symbol(i) if i == state.specials.vec_nth => {
+            state.tail = false;
+            if cdr.len() != 2 {
+                return Err(VMError::new_compile(format!(
+                    "takes two arguments, got {}, line {}",
+                    cdr.len(),
+                    line
+                )));
+            }
+            compile(vm, state, cdr[0], result + 1, line)?;
+            compile(vm, state, cdr[1], result + 2, line)?;
+            state.chunk.encode3(
+                VECNTH,
+                (result + 1) as u16,
+                result as u16,
+                (result + 2) as u16,
+                *line,
+            )?;
+        }
+        Value::Symbol(i) if i == state.specials.vec_set => {
+            state.tail = false;
+            if cdr.len() != 3 {
+                return Err(VMError::new_compile(format!(
+                    "takes three arguments, got {}, line {}",
+                    cdr.len(),
+                    line
+                )));
+            }
+            compile(vm, state, cdr[0], result, line)?;
+            compile(vm, state, cdr[1], result + 1, line)?;
+            compile(vm, state, cdr[2], result + 2, line)?;
+            state.chunk.encode3(
+                VECSTH,
+                result as u16,
+                (result + 2) as u16,
+                (result + 1) as u16,
+                *line,
+            )?;
         }
         _ => return Ok(false),
     }
