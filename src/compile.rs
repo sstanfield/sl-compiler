@@ -597,6 +597,35 @@ fn compile_vec(
                 *line,
             )?;
         }
+        Value::Symbol(i) if i == state.specials.make_vec => {
+            state.tail = false;
+            if cdr.is_empty() {
+                state
+                    .chunk
+                    .encode3(VEC, result as u16, result as u16, result as u16, *line)?;
+            } else if cdr.len() == 1 {
+                compile(vm, state, cdr[0], result + 1, line)?;
+                state
+                    .chunk
+                    .encode2(VECMK, result as u16, (result + 1) as u16, *line)?;
+            } else if cdr.len() == 2 {
+                compile(vm, state, cdr[0], result + 1, line)?;
+                compile(vm, state, cdr[1], result + 2, line)?;
+                state.chunk.encode3(
+                    VECMKD,
+                    result as u16,
+                    (result + 1) as u16,
+                    (result + 2) as u16,
+                    *line,
+                )?;
+            } else {
+                return Err(VMError::new_compile(format!(
+                    "takes up to two arguments, got {}, line {}",
+                    cdr.len(),
+                    line
+                )));
+            }
+        }
         Value::Symbol(i) if i == state.specials.vec_push => {
             state.tail = false;
             if cdr.len() != 2 {
