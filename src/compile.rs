@@ -119,7 +119,7 @@ fn new_state(
 ) -> VMResult<CompileState> {
     match args {
         Value::Reference(h) => {
-            let new_state = CompileState::new_state(
+            let mut new_state = CompileState::new_state(
                 vm,
                 state.chunk.file_name,
                 *line,
@@ -141,15 +141,29 @@ fn new_state(
                     )));
                 }
             };
+            let mut opt = false;
+            let mut rest = false;
             for a in args_iter {
                 if let Value::Symbol(i) = a {
-                    new_state.symbols.borrow_mut().data.borrow_mut().add_sym(i);
+                    if i == new_state.specials.opt {
+                        opt = true;
+                    } else if i == new_state.specials.rest {
+                        rest = true;
+                    } else {
+                        new_state.symbols.borrow_mut().data.borrow_mut().add_sym(i);
+                        if opt {
+                            new_state.chunk.opt_args += 1;
+                        } else {
+                            new_state.chunk.args += 1;
+                        }
+                    }
                 } else {
                     return Err(VMError::new_compile(
                         "Malformed fn, invalid args, must be symbols.",
                     ));
                 }
             }
+            new_state.chunk.rest = rest;
             Ok(new_state)
         }
         Value::Nil => Ok(CompileState::new_state(
@@ -180,6 +194,7 @@ fn compile_fn(
         pass1(vm, &mut new_state, *r).unwrap();
     }
     let reserved = new_state.reserved_regs();
+    println!("XXX reserved {}", reserved);
     let last_thing = cdr.len() - 1;
     for (i, r) in cdr.iter().enumerate() {
         if i == last_thing {
