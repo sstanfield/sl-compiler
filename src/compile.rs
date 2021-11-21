@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use slvm::error::*;
@@ -8,6 +9,64 @@ use slvm::vm::*;
 
 use crate::backquote::*;
 use crate::state::*;
+
+fn compile_params(
+    vm: &mut Vm,
+    state: &mut CompileState,
+    cdr: &[Value],
+    result: usize,
+    tail: bool,
+    line: &mut u32,
+) -> VMResult<()> {
+    fn move_locals(
+        state: &mut CompileState,
+        var_map: &HashMap<usize, Vec<usize>>,
+        var_skips: &mut Vec<usize>,
+        idx: usize,
+        line: &mut u32,
+    ) -> VMResult<()> {
+        if let Some(t_vec) = var_map.get(&idx) {
+            for target in t_vec {
+                if *target > idx {
+                    move_locals(state, var_map, var_skips, *target, line)?;
+                    var_skips.push(*target);
+                    state
+                        .chunk
+                        .encode2(MOV, *target as u16, idx as u16, *line)?;
+                }
+            }
+        }
+        Ok(())
+    }
+    if tail {
+        let mut var_map: HashMap<usize, Vec<usize>> = HashMap::new();
+        let mut var_skips = Vec::new();
+        for (i, r) in cdr.iter().enumerate() {
+            if let Value::Symbol(intern) = r {
+                if let Some(idx) = state.get_symbol(*intern) {
+                    if i != idx {
+                        if let Some(v) = var_map.get_mut(&(idx + 1)) {
+                            v.push(i + 1);
+                        } else {
+                            var_map.insert(idx + 1, vec![i + 1]);
+                        }
+                    }
+                }
+            }
+        }
+        for (i, r) in cdr.iter().enumerate() {
+            move_locals(state, &var_map, &mut var_skips, i + 1, line)?;
+            if !var_skips.contains(&(i + 1)) {
+                compile(vm, state, *r, i + 1, line)?;
+            }
+        }
+    } else {
+        for (i, r) in cdr.iter().enumerate() {
+            compile(vm, state, *r, result + i + 1, line)?;
+        }
+    }
+    Ok(())
+}
 
 fn compile_call(
     vm: &mut Vm,
@@ -21,10 +80,7 @@ fn compile_call(
     let const_i = state.add_constant(callable);
     let tail = state.tail;
     state.tail = false;
-    let result = if tail { 0 } else { result };
-    for (i, r) in cdr.iter().enumerate() {
-        compile(vm, state, *r, result + i + 1, line)?;
-    }
+    compile_params(vm, state, cdr, result, tail, line)?;
     state
         .chunk
         .encode2(CONST, b_reg as u16, const_i as u16, *line)?;
@@ -50,10 +106,7 @@ fn compile_callg(
 ) -> VMResult<()> {
     let tail = state.tail;
     state.tail = false;
-    let result = if tail { 0 } else { result };
-    for (i, r) in cdr.iter().enumerate() {
-        compile(vm, state, *r, result + i + 1, line)?;
-    }
+    compile_params(vm, state, cdr, result, tail, line)?;
     if tail {
         state.chunk.encode_tcallg(global, cdr.len() as u16, *line)?;
     } else {
@@ -74,10 +127,7 @@ fn compile_call_reg(
 ) -> VMResult<()> {
     let tail = state.tail;
     state.tail = false;
-    let result = if tail { 0 } else { result };
-    for (i, r) in cdr.iter().enumerate() {
-        compile(vm, state, *r, result + i + 1, line)?;
-    }
+    compile_params(vm, state, cdr, result, tail, line)?;
     if tail {
         state.chunk.encode2(TCALL, reg, cdr.len() as u16, *line)?;
     } else {
@@ -97,10 +147,7 @@ fn compile_call_myself(
 ) -> VMResult<()> {
     let tail = state.tail;
     state.tail = false;
-    let result = if tail { 0 } else { result };
-    for (i, r) in cdr.iter().enumerate() {
-        compile(vm, state, *r, result + i + 1, line)?;
-    }
+    compile_params(vm, state, cdr, result, tail, line)?;
     if tail {
         state.chunk.encode1(TCALLM, cdr.len() as u16, *line)?;
     } else {
@@ -194,7 +241,6 @@ fn compile_fn(
         pass1(vm, &mut new_state, *r).unwrap();
     }
     let reserved = new_state.reserved_regs();
-    println!("XXX reserved {}", reserved);
     let last_thing = cdr.len() - 1;
     for (i, r) in cdr.iter().enumerate() {
         if i == last_thing {
@@ -1110,9 +1156,11 @@ pub fn compile(
         },
         Value::Symbol(i) => {
             if let Some(idx) = state.get_symbol(i) {
-                state
-                    .chunk
-                    .encode2(MOV, result as u16, (idx + 1) as u16, *line)?;
+                if result != idx + 1 {
+                    state
+                        .chunk
+                        .encode2(MOV, result as u16, (idx + 1) as u16, *line)?;
+                }
             } else {
                 let const_i = vm.reserve_index(i);
                 state.chunk.encode_refi(result as u16, const_i, *line)?;
