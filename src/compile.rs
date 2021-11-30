@@ -55,8 +55,8 @@ fn compile_params(
             }
         }
         for (i, r) in cdr.iter().enumerate() {
-            move_locals(state, &var_map, &mut var_skips, i + 1, line)?;
             if !var_skips.contains(&(i + 1)) {
+                move_locals(state, &var_map, &mut var_skips, i + 1, line)?;
                 compile(vm, state, *r, i + 1, line)?;
             }
         }
@@ -164,6 +164,28 @@ fn new_state(
     args: Value,
     line: &mut u32,
 ) -> VMResult<CompileState> {
+    fn get_args_iter<'vm>(
+        vm: &'vm Vm,
+        args: Value,
+        obj: &Object,
+        line: &mut u32,
+    ) -> VMResult<Box<dyn Iterator<Item = Value> + 'vm>> {
+        match obj {
+            Object::Pair(_car, _cdr, meta) => {
+                if let Some(meta) = meta {
+                    *line = meta.line as u32;
+                }
+                Ok(args.iter(vm))
+            }
+            Object::Vector(_v) => Ok(args.iter(vm)),
+            _ => {
+                return Err(VMError::new_compile(format!(
+                    "Malformed fn, invalid args, {:?}.",
+                    obj
+                )));
+            }
+        }
+    }
     match args {
         Value::Reference(h) => {
             let mut new_state = CompileState::new_state(
@@ -173,41 +195,65 @@ fn new_state(
                 Some(state.symbols.clone()),
             );
             let obj = vm.get(h);
-            let args_iter = match obj {
-                Object::Pair(_car, _cdr, meta) => {
-                    if let Some(meta) = meta {
-                        *line = meta.line as u32;
-                    }
-                    args.iter(vm)
-                }
-                Object::Vector(_v) => args.iter(vm),
-                _ => {
-                    return Err(VMError::new_compile(format!(
-                        "Malformed fn, invalid args, {:?}.",
-                        obj
-                    )));
-                }
-            };
+            let args_iter = get_args_iter(vm, args, obj, line)?;
             let mut opt = false;
             let mut rest = false;
+            let mut opt_comps = Vec::new();
             for a in args_iter {
-                if let Value::Symbol(i) = a {
-                    if i == new_state.specials.opt {
-                        opt = true;
-                    } else if i == new_state.specials.rest {
-                        rest = true;
-                    } else {
-                        new_state.symbols.borrow_mut().data.borrow_mut().add_sym(i);
-                        if opt {
-                            new_state.chunk.opt_args += 1;
+                match a {
+                    Value::Symbol(i) => {
+                        if i == new_state.specials.rest {
+                            rest = true;
                         } else {
-                            new_state.chunk.args += 1;
+                            new_state.symbols.borrow_mut().data.borrow_mut().add_sym(i);
+                            if opt {
+                                new_state.chunk.opt_args += 1;
+                            } else {
+                                new_state.chunk.args += 1;
+                            }
                         }
                     }
-                } else {
-                    return Err(VMError::new_compile(
-                        "Malformed fn, invalid args, must be symbols.",
-                    ));
+                    Value::Reference(h) => {
+                        let obj = vm.get(h);
+                        let mut args_iter = get_args_iter(vm, a, obj, line)?;
+                        opt = true;
+                        if let Some(Value::Symbol(i)) = args_iter.next() {
+                            new_state.symbols.borrow_mut().data.borrow_mut().add_sym(i);
+                            new_state.chunk.opt_args += 1;
+                            if let Some(r) = args_iter.next() {
+                                opt_comps.push(r);
+                            }
+                            // XXX Check to make sure only two elements...
+                        }
+                    }
+                    _ => {
+                        return Err(VMError::new_compile(
+                            "Malformed fn, invalid args, must be symbols.",
+                        ))
+                    }
+                }
+            }
+            if !opt_comps.is_empty() {
+                let mut temp_state = CompileState::new_temp(vm, &new_state, *line);
+                let reserved = new_state.reserved_regs();
+                for (i, r) in opt_comps.into_iter().enumerate() {
+                    let target_reg = new_state.chunk.args as usize + i + 1;
+                    temp_state.chunk.code.clear();
+                    let mut tline = *line;
+                    compile(vm, &mut temp_state, r, reserved, &mut tline)?;
+                    temp_state
+                        .chunk
+                        .encode2(MOV, target_reg as u16, reserved as u16, *line)?;
+                    new_state.chunk.encode2(
+                        JMPFNU,
+                        target_reg as u16,
+                        temp_state.chunk.code.len() as u16,
+                        *line,
+                    )?;
+                    compile(vm, &mut new_state, r, reserved, line)?;
+                    new_state
+                        .chunk
+                        .encode2(MOV, target_reg as u16, reserved as u16, *line)?;
                 }
             }
             new_state.chunk.rest = rest;

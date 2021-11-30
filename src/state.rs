@@ -160,7 +160,6 @@ pub struct Specials {
     pub equal: Interned,
 
     pub rest: Interned,
-    pub opt: Interned,
 }
 
 impl Specials {
@@ -205,7 +204,6 @@ impl Specials {
             equal: vm.intern("equal?"),
 
             rest: vm.intern("&rest"),
-            opt: vm.intern("&opt"),
         }
     }
 }
