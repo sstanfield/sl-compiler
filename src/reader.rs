@@ -530,6 +530,8 @@ fn do_atom(
         }
         if symbol == "nil" {
             Value::Nil
+        } else if symbol.len() > 1 && symbol.starts_with(':') {
+            Value::Keyword(vm.intern(&symbol[1..]))
         } else {
             Value::Symbol(vm.intern(symbol))
         }
