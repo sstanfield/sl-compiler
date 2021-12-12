@@ -158,12 +158,12 @@ fn compile_call_myself(
     Ok(())
 }
 
-fn new_state(
+fn mk_state(
     vm: &mut Vm,
     state: &mut CompileState,
     args: Value,
     line: &mut u32,
-) -> VMResult<CompileState> {
+) -> VMResult<(CompileState, Option<Vec<Value>>)> {
     fn get_args_iter<'vm>(
         vm: &'vm Vm,
         args: Value,
@@ -199,6 +199,7 @@ fn new_state(
             let mut opt = false;
             let mut rest = false;
             let mut opt_comps = Vec::new();
+            new_state.chunk.dbg_args = Some(Vec::new());
             for a in args_iter {
                 match a {
                     Value::Symbol(i) => {
@@ -206,6 +207,9 @@ fn new_state(
                             rest = true;
                         } else {
                             new_state.symbols.borrow_mut().data.borrow_mut().add_sym(i);
+                            if let Some(dbg_args) = state.chunk.dbg_args.as_mut() {
+                                dbg_args.push(i);
+                            }
                             if opt {
                                 new_state.chunk.opt_args += 1;
                             } else {
@@ -219,6 +223,9 @@ fn new_state(
                         opt = true;
                         if let Some(Value::Symbol(i)) = args_iter.next() {
                             new_state.symbols.borrow_mut().data.borrow_mut().add_sym(i);
+                            if let Some(dbg_args) = state.chunk.dbg_args.as_mut() {
+                                dbg_args.push(i);
+                            }
                             new_state.chunk.opt_args += 1;
                             if let Some(r) = args_iter.next() {
                                 opt_comps.push(r);
@@ -233,44 +240,26 @@ fn new_state(
                     }
                 }
             }
-            if !opt_comps.is_empty() {
-                let mut temp_state = CompileState::new_temp(vm, &new_state, *line);
-                let reserved = new_state.reserved_regs();
-                for (i, r) in opt_comps.into_iter().enumerate() {
-                    let target_reg = new_state.chunk.args as usize + i + 1;
-                    temp_state.chunk.code.clear();
-                    let mut tline = *line;
-                    compile(vm, &mut temp_state, r, reserved, &mut tline)?;
-                    temp_state
-                        .chunk
-                        .encode2(MOV, target_reg as u16, reserved as u16, *line)?;
-                    new_state.chunk.encode2(
-                        JMPFNU,
-                        target_reg as u16,
-                        temp_state.chunk.code.len() as u16,
-                        *line,
-                    )?;
-                    compile(vm, &mut new_state, r, reserved, line)?;
-                    new_state
-                        .chunk
-                        .encode2(MOV, target_reg as u16, reserved as u16, *line)?;
-                }
-            }
             new_state.chunk.rest = rest;
-            Ok(new_state)
+            if !opt_comps.is_empty() {
+                Ok((new_state, Some(opt_comps)))
+            } else {
+                Ok((new_state, None))
+            }
         }
-        Value::Nil => Ok(CompileState::new_state(
-            vm,
-            state.chunk.file_name,
-            *line,
-            Some(state.symbols.clone()),
+        Value::Nil => Ok((
+            CompileState::new_state(
+                vm,
+                state.chunk.file_name,
+                *line,
+                Some(state.symbols.clone()),
+            ),
+            None,
         )),
-        _ => {
-            return Err(VMError::new_compile(format!(
-                "Malformed fn, invalid args, {:?}.",
-                args
-            )))
-        }
+        _ => Err(VMError::new_compile(format!(
+            "Malformed fn, invalid args, {:?}.",
+            args
+        ))),
     }
 }
 
@@ -282,11 +271,33 @@ fn compile_fn(
     result: usize,
     line: &mut u32,
 ) -> VMResult<()> {
-    let mut new_state = new_state(vm, state, args, line)?;
+    let (mut new_state, opt_comps) = mk_state(vm, state, args, line)?;
     for r in cdr.iter() {
         pass1(vm, &mut new_state, *r).unwrap();
     }
     let reserved = new_state.reserved_regs();
+    if let Some(opt_comps) = opt_comps {
+        let mut temp_state = CompileState::new_temp(vm, &new_state, *line);
+        for (i, r) in opt_comps.into_iter().enumerate() {
+            let target_reg = new_state.chunk.args as usize + i + 1;
+            temp_state.chunk.code.clear();
+            let mut tline = *line;
+            compile(vm, &mut temp_state, r, reserved, &mut tline)?;
+            temp_state
+                .chunk
+                .encode2(MOV, target_reg as u16, reserved as u16, *line)?;
+            new_state.chunk.encode2(
+                JMPFNU,
+                target_reg as u16,
+                temp_state.chunk.code.len() as u16,
+                *line,
+            )?;
+            compile(vm, &mut new_state, r, reserved, line)?;
+            new_state
+                .chunk
+                .encode2(MOV, target_reg as u16, reserved as u16, *line)?;
+        }
+    }
     let last_thing = cdr.len() - 1;
     for (i, r) in cdr.iter().enumerate() {
         if i == last_thing {
@@ -330,11 +341,33 @@ fn compile_macro(
     result: usize,
     line: &mut u32,
 ) -> VMResult<()> {
-    let mut new_state = new_state(vm, state, args, line)?;
+    let (mut new_state, opt_comps) = mk_state(vm, state, args, line)?;
     for r in cdr.iter() {
         pass1(vm, &mut new_state, *r).unwrap();
     }
     let reserved = new_state.reserved_regs();
+    if let Some(opt_comps) = opt_comps {
+        let mut temp_state = CompileState::new_temp(vm, &new_state, *line);
+        for (i, r) in opt_comps.into_iter().enumerate() {
+            let target_reg = new_state.chunk.args as usize + i + 1;
+            temp_state.chunk.code.clear();
+            let mut tline = *line;
+            compile(vm, &mut temp_state, r, reserved, &mut tline)?;
+            temp_state
+                .chunk
+                .encode2(MOV, target_reg as u16, reserved as u16, *line)?;
+            new_state.chunk.encode2(
+                JMPFNU,
+                target_reg as u16,
+                temp_state.chunk.code.len() as u16,
+                *line,
+            )?;
+            compile(vm, &mut new_state, r, reserved, line)?;
+            new_state
+                .chunk
+                .encode2(MOV, target_reg as u16, reserved as u16, *line)?;
+        }
+    }
     for r in cdr.iter() {
         compile(vm, &mut new_state, *r, reserved, line)?;
     }
@@ -1114,6 +1147,9 @@ pub fn pass1(vm: &mut Vm, state: &mut CompileState, exp: Value) -> VMResult<()> 
         Value::Symbol(i) => {
             if state.get_symbol(i).is_none() && state.symbols.borrow().can_capture(i) {
                 state.symbols.borrow_mut().insert_capture(vm, i);
+                if let Some(dbg_args) = state.chunk.dbg_args.as_mut() {
+                    dbg_args.push(i);
+                }
             }
         }
         Value::True => {}

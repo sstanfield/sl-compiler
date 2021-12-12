@@ -12,7 +12,7 @@ pub struct Config {
 
 pub const VERSION_STRING: &str = env!("VERSION_STRING");
 
-const HELP: &str = r#"sl-sh - Simple Lisp Compiler
+const HELP: &str = r#"sl-compiler - Simple Lisp Compiler
 Run sl-compiler.
 
 USAGE:

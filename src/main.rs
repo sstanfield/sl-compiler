@@ -35,6 +35,7 @@ fn eval(vm: &mut Vm, registers: &[Value]) -> VMResult<Value> {
     if let Some(exp) = registers.get(0) {
         let mut line = 1;
         let mut state = CompileState::new_state(vm, "none", line, None);
+        state.chunk.dbg_args = Some(Vec::new());
         pass1(vm, &mut state, *exp).unwrap();
         compile(vm, &mut state, *exp, 0, &mut line).unwrap();
         state.chunk.encode0(RET, line).unwrap();
@@ -69,6 +70,7 @@ fn main() {
         }
         let file_name = vm.get_interned(file_i);
         let mut state = CompileState::new_state(&mut vm, file_name, line, None);
+        state.chunk.dbg_args = Some(Vec::new());
         pass1(&mut vm, &mut state, exp).unwrap();
         compile(&mut vm, &mut state, exp, 0, &mut line).unwrap();
         state.chunk.encode0(RET, line).unwrap();
