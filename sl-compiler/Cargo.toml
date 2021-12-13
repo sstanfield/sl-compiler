@@ -1,13 +1,14 @@
 [package]
-name = "slosh"
+name = "sl-compiler"
 version = "0.1.0"
 edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-sl-compiler = { path = "../sl-compiler" }
-sl-liner = { git = "https://github.com/sl-sh-dev/sl-liner.git" }
+unicode-segmentation = "1.7.1"
 slvm = { path = "../../slvm" }
 #slvm = { git = "https://github.com/sstanfield/slvm.git" }
 
+[build-dependencies]
+chrono = "0.4.7"
