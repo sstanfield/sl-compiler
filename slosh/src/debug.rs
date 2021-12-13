@@ -55,9 +55,9 @@ pub fn debug(vm: &mut Vm) {
     let stack = vm.intern("stack");
     let mut con = Context::new();
 
-    con.history
-        .set_file_name_and_load_history("history_debug")
-        .unwrap();
+    if let Err(e) = con.history.set_file_name_and_load_history("history_debug") {
+        println!("Error loading history: {}", e);
+    }
     loop {
         let res = match con.read_line(Prompt::from("DEBUG> "), None) {
             Ok(input) => input,
@@ -97,7 +97,9 @@ pub fn debug(vm: &mut Vm) {
                                 let stk_idx = stk_idx.abs() as usize;
                                 for (i, frame) in vm.get_call_stack().iter().rev().enumerate() {
                                     if i + 1 == stk_idx {
-                                        frame.chunk.disassemble_chunk(vm, 0).unwrap();
+                                        if let Err(e) = frame.chunk.disassemble_chunk(vm, 0) {
+                                            println!("Error in disassembly: {}", e);
+                                        }
                                         break;
                                     }
                                 }
@@ -105,7 +107,9 @@ pub fn debug(vm: &mut Vm) {
                                 println!("Param not an int.");
                             }
                         } else if let Some(err_frame) = vm.err_frame() {
-                            err_frame.chunk.disassemble_chunk(vm, 0).unwrap();
+                            if let Err(e) = err_frame.chunk.disassemble_chunk(vm, 0) {
+                                println!("Error in disassembly: {}", e);
+                            }
                         } else {
                             println!("Nothing to disassemble.");
                         }
