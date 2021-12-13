@@ -1055,6 +1055,16 @@ fn compile_list(
                     )?;
                 }
             }
+            Value::Symbol(i) if i == state.specials.type_ => {
+                if cdr.len() != 1 {
+                    return Err(VMError::new_compile("Requires at one argument."));
+                } else {
+                    compile(vm, state, cdr[0], result + 1, line)?;
+                    state
+                        .chunk
+                        .encode2(TYPE, result as u16, (result + 1) as u16, *line)?;
+                }
+            }
             Value::Symbol(i) => {
                 if let Some(idx) = state.get_symbol(i) {
                     compile_call_reg(vm, state, (idx + 1) as u16, cdr, result, line)?
