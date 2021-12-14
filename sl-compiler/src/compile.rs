@@ -834,6 +834,32 @@ fn compile_vec(
                 *line,
             )?;
         }
+        Value::Symbol(i) if i == state.specials.vec_len => {
+            state.tail = false;
+            if cdr.len() != 1 {
+                return Err(VMError::new_compile(format!(
+                    "takes one argument, got {}, line {}",
+                    cdr.len(),
+                    line
+                )));
+            }
+            compile(vm, state, cdr[0], result + 1, line)?;
+            state
+                .chunk
+                .encode2(VECLEN, result as u16, (result + 1) as u16, *line)?;
+        }
+        Value::Symbol(i) if i == state.specials.vec_clr => {
+            state.tail = false;
+            if cdr.len() != 1 {
+                return Err(VMError::new_compile(format!(
+                    "takes one argument, got {}, line {}",
+                    cdr.len(),
+                    line
+                )));
+            }
+            compile(vm, state, cdr[0], result, line)?;
+            state.chunk.encode1(VECCLR, result as u16, *line)?;
+        }
         _ => return Ok(false),
     }
     Ok(true)
@@ -846,14 +872,24 @@ fn compile_if(
     result: usize,
     line: &mut u32,
 ) -> VMResult<()> {
+    if cdr.is_empty() {
+        return Err(VMError::new_compile(format!(
+            "requires at least one argument, got 0, line {}",
+            line
+        )));
+    }
     let mut temp_state = CompileState::new_temp(vm, state, *line);
     let tail = state.tail;
     state.tail = false;
     let mut end_patches = Vec::new();
     let mut cdr_i = cdr.iter();
     while let Some(r) = cdr_i.next() {
+        let next = cdr_i.next();
+        if next.is_none() {
+            state.tail = tail;
+        }
         compile(vm, state, *r, result, line)?;
-        if let Some(r) = cdr_i.next() {
+        if let Some(r) = next {
             state.tail = tail;
             temp_state.tail = tail;
             temp_state.chunk.code.clear();
@@ -868,8 +904,84 @@ fn compile_if(
             compile(vm, state, *r, result, line)?;
             state.chunk.encode1(JMPF, 256, *line)?; // Force wide for constant size.
             end_patches.push(state.chunk.code.len());
-            state.tail = false;
         }
+        state.tail = false;
+    }
+    let end_ip = state.chunk.code.len();
+    for i in end_patches {
+        let f = (end_ip - i) as u16;
+        // XXX TODO, if less then u8 then remove WIDE and pad with NOP
+        state.chunk.code[i - 2] = ((f & 0xFF00) >> 8) as u8;
+        state.chunk.code[i - 1] = (f & 0x00FF) as u8;
+    }
+    Ok(())
+}
+
+fn compile_and(
+    vm: &mut Vm,
+    state: &mut CompileState,
+    cdr: &[Value],
+    result: usize,
+    line: &mut u32,
+) -> VMResult<()> {
+    if cdr.is_empty() {
+        return Err(VMError::new_compile(format!(
+            "requires at least one argument, got 0, line {}",
+            line
+        )));
+    }
+    let tail = state.tail;
+    state.tail = false;
+    let mut end_patches = Vec::new();
+    let mut cdr_i = cdr.iter();
+    let mut next = cdr_i.next();
+    while let Some(r) = next {
+        next = cdr_i.next();
+        if next.is_none() {
+            state.tail = tail;
+        }
+        compile(vm, state, *r, result, line)?;
+        state.chunk.encode2(JMPFF, result as u16, 256, *line)?; // Force wide for constant size.
+        end_patches.push(state.chunk.code.len());
+        state.tail = false;
+    }
+    let end_ip = state.chunk.code.len();
+    for i in end_patches {
+        let f = (end_ip - i) as u16;
+        // XXX TODO, if less then u8 then remove WIDE and pad with NOP
+        state.chunk.code[i - 2] = ((f & 0xFF00) >> 8) as u8;
+        state.chunk.code[i - 1] = (f & 0x00FF) as u8;
+    }
+    Ok(())
+}
+
+fn compile_or(
+    vm: &mut Vm,
+    state: &mut CompileState,
+    cdr: &[Value],
+    result: usize,
+    line: &mut u32,
+) -> VMResult<()> {
+    if cdr.is_empty() {
+        return Err(VMError::new_compile(format!(
+            "requires at least one argument, got 0, line {}",
+            line
+        )));
+    }
+    let tail = state.tail;
+    state.tail = false;
+    let mut end_patches = Vec::new();
+    let mut cdr_i = cdr.iter();
+    let mut next = cdr_i.next();
+    while let Some(r) = next {
+        next = cdr_i.next();
+        if next.is_none() {
+            state.tail = tail;
+        }
+        compile(vm, state, *r, result, line)?;
+        state.chunk.encode2(JMPFT, result as u16, 256, *line)?; // Force wide for constant size.
+        end_patches.push(state.chunk.code.len());
+        state.tail = false;
     }
     let end_ip = state.chunk.code.len();
     for i in end_patches {
@@ -891,6 +1003,18 @@ fn compile_def(
     if cdr.len() == 2 {
         if let Value::Symbol(si) = cdr[0] {
             compile(vm, state, cdr[1], result + 1, line)?;
+            let si_const = vm.reserve_index(si);
+            state.chunk.encode_refi(result as u16, si_const, *line)?;
+            state
+                .chunk
+                .encode2(DEF, result as u16, (result + 1) as u16, *line)?;
+        } else {
+            return Err(VMError::new_compile("def: expected symbol"));
+        }
+    } else if cdr.len() == 3 {
+        // XXX implement docstrings
+        if let Value::Symbol(si) = cdr[0] {
+            compile(vm, state, cdr[2], result + 1, line)?;
             let si_const = vm.reserve_index(si);
             state.chunk.encode_refi(result as u16, si_const, *line)?;
             state
@@ -1039,7 +1163,7 @@ fn compile_list(
             }
             Value::Symbol(i) if i == state.specials.equal => {
                 if cdr.len() <= 1 {
-                    return Err(VMError::new_compile("Requires at least two arguments."));
+                    return Err(VMError::new_compile("Requires at least two arguments. 2"));
                 } else {
                     let mut max = 0;
                     for (i, v) in cdr.iter().enumerate() {
@@ -1057,13 +1181,57 @@ fn compile_list(
             }
             Value::Symbol(i) if i == state.specials.type_ => {
                 if cdr.len() != 1 {
-                    return Err(VMError::new_compile("Requires at one argument."));
+                    return Err(VMError::new_compile("Requires one argument."));
                 } else {
                     compile(vm, state, cdr[0], result + 1, line)?;
                     state
                         .chunk
                         .encode2(TYPE, result as u16, (result + 1) as u16, *line)?;
                 }
+            }
+            Value::Symbol(i) if i == state.specials.not => {
+                if cdr.len() != 1 {
+                    return Err(VMError::new_compile("Requires one argument."));
+                } else {
+                    compile(vm, state, cdr[0], result + 1, line)?;
+                    state
+                        .chunk
+                        .encode2(NOT, result as u16, (result + 1) as u16, *line)?;
+                }
+            }
+            Value::Symbol(i) if i == state.specials.err => {
+                let len = cdr.len();
+                if len != 1 && len != 2 {
+                    return Err(VMError::new_compile("Requires one or two arguments."));
+                } else {
+                    if len == 2 {
+                        compile(vm, state, cdr[0], result, line)?;
+                        compile(vm, state, cdr[1], result + 1, line)?;
+                    } else {
+                        let error = vm.intern("error");
+                        compile(vm, state, Value::Keyword(error), result, line)?;
+                        compile(vm, state, cdr[0], result + 1, line)?;
+                    }
+                    state
+                        .chunk
+                        .encode2(ERR, result as u16, (result + 1) as u16, *line)?;
+                }
+            }
+            Value::Symbol(i) if i == state.specials.and => {
+                compile_and(vm, state, cdr, result, line)?;
+            }
+            Value::Symbol(i) if i == state.specials.or => {
+                compile_or(vm, state, cdr, result, line)?;
+            }
+            Value::Symbol(i) if i == state.specials.str_ => {
+                let mut max = 0;
+                for (i, v) in cdr.iter().enumerate() {
+                    compile(vm, state, *v, result + i + 1, line)?;
+                    max = result + i + 1;
+                }
+                state
+                    .chunk
+                    .encode3(STR, result as u16, (result + 1) as u16, max as u16, *line)?;
             }
             Value::Symbol(i) => {
                 if let Some(idx) = state.get_symbol(i) {

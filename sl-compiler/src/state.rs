@@ -159,6 +159,13 @@ pub struct Specials {
     pub eq: Interned,
     pub equal: Interned,
     pub type_: Interned,
+    pub not: Interned,
+    pub and: Interned,
+    pub or: Interned,
+    pub err: Interned,
+    pub vec_len: Interned,
+    pub vec_clr: Interned,
+    pub str_: Interned,
 
     pub rest: Interned,
 }
@@ -204,6 +211,13 @@ impl Specials {
             eq: vm.intern_static("eq?"),
             equal: vm.intern_static("equal?"),
             type_: vm.intern_static("type"),
+            not: vm.intern_static("not"),
+            and: vm.intern_static("and"),
+            or: vm.intern_static("or"),
+            err: vm.intern_static("err"),
+            vec_len: vm.intern_static("vec-len"),
+            vec_clr: vm.intern_static("vec-clear!"),
+            str_: vm.intern_static("str"),
 
             rest: vm.intern_static("&rest"),
         }

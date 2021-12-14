@@ -98,6 +98,19 @@ fn load(vm: &mut Vm, registers: &[Value]) -> VMResult<Value> {
         state.chunk.encode0(RET, line)?;
         let chunk = Rc::new(state.chunk.clone());
         vm.execute(chunk)?;
+        /*            if let Err(err) = vm.execute(chunk) {
+            println!("ERROR: {}", err.display(&vm));
+            if let Some(err_frame) = vm.err_frame() {
+                let ip = err_frame.current_ip;
+                let line = err_frame.chunk.offset_to_line(ip).unwrap_or(0);
+                println!(
+                    "{} line: {} ip: {:#010x}",
+                    err_frame.chunk.file_name, line, ip
+                );
+            }
+            debug(vm);
+            return Err(err);
+        }*/
         last = vm.get_stack(0);
     }
     Ok(last)
@@ -161,7 +174,7 @@ fn main() {
                     }
                     let chunk = Rc::new(state.chunk.clone());
                     if let Err(err) = vm.execute(chunk) {
-                        println!("ERROR: {}", err);
+                        println!("ERROR: {}", err.display(&vm));
                         if let Some(err_frame) = vm.err_frame() {
                             let ip = err_frame.current_ip;
                             let line = err_frame.chunk.offset_to_line(ip).unwrap_or(0);
