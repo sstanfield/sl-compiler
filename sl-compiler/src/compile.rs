@@ -893,8 +893,9 @@ fn compile_if(
             state.tail = tail;
             temp_state.tail = tail;
             temp_state.chunk.code.clear();
-            compile(vm, &mut temp_state, *r, result, line)?;
-            temp_state.chunk.encode1(JMPF, 256, *line)?; // Force wide for constant size.
+            let mut tline = *line;
+            compile(vm, &mut temp_state, *r, result, &mut tline)?;
+            temp_state.chunk.encode1(JMPF, 256, tline)?; // Force wide for constant size.
             state.chunk.encode2(
                 JMPFF,
                 result as u16,

@@ -122,6 +122,8 @@ fn append(vm: &mut Vm, exp1: Value, exp2: Value) -> Value {
     Value::Reference(vm.alloc(Object::Pair(Value::Symbol(q_i), cdr2, None)))
 }
 
+// Algorithm initially from
+// https://3e8.org/pub/scheme/doc/Quasiquotation%20in%20Lisp%20(Bawden).pdf
 fn qq_expand(vm: &mut Vm, exp: Value, line: &mut u32) -> VMResult<Value> {
     let tag = Tag::new(vm);
     if tag.is_unquote(vm, exp) {

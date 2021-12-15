@@ -93,9 +93,22 @@ fn load(vm: &mut Vm, registers: &[Value]) -> VMResult<Value> {
         }
         let mut state = CompileState::new_state(vm, name, line, None);
         state.chunk.dbg_args = Some(Vec::new());
-        pass1(vm, &mut state, exp)?;
-        compile(vm, &mut state, exp, 0, &mut line)?;
-        state.chunk.encode0(RET, line)?;
+        //pass1(vm, &mut state, exp)?;
+        //compile(vm, &mut state, exp, 0, &mut line)?;
+        //state.chunk.encode0(RET, line)?;
+        if let Err(e) = pass1(vm, &mut state, exp) {
+            println!("Compile error, {}, line {}: {}", name, line, e);
+            return Err(e);
+        }
+        if let Err(e) = compile(vm, &mut state, exp, 0, &mut line) {
+            println!("Compile error, {} line {}: {}", name, line, e);
+            return Err(e);
+        }
+        if let Err(e) = state.chunk.encode0(RET, line) {
+            println!("Compile error, {} line {}: {}", name, line, e);
+            return Err(e);
+        }
+        state.chunk.extra_regs = state.max_regs;
         let chunk = Rc::new(state.chunk.clone());
         vm.execute(chunk)?;
         /*            if let Err(err) = vm.execute(chunk) {
