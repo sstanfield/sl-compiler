@@ -105,54 +105,117 @@ impl Tag {
 
 fn quote(vm: &mut Vm, exp: Value) -> Value {
     let cdr = Value::Reference(vm.alloc(Object::Pair(exp, Value::Nil, None)));
-    let q_i = vm.intern("quote");
+    let q_i = vm.intern_static("quote");
     Value::Reference(vm.alloc(Object::Pair(Value::Symbol(q_i), cdr, None)))
 }
 
 fn list(vm: &mut Vm, exp: Value) -> Value {
     let cdr = Value::Reference(vm.alloc(Object::Pair(exp, Value::Nil, None)));
-    let q_i = vm.intern("list");
+    let q_i = vm.intern_static("list");
     Value::Reference(vm.alloc(Object::Pair(Value::Symbol(q_i), cdr, None)))
+}
+
+fn vec(vm: &mut Vm, v: &[Value]) -> Value {
+    let mut last_pair = Value::Nil;
+    if !v.is_empty() {
+        let mut i = v.len();
+        while i > 0 {
+            let obj = Object::Pair(v[i - 1], last_pair, None);
+            last_pair = Value::Reference(vm.alloc(obj));
+            i -= 1;
+        }
+    }
+    let q_i = vm.intern_static("vec");
+    Value::Reference(vm.alloc(Object::Pair(Value::Symbol(q_i), last_pair, None)))
+}
+
+fn list2(vm: &mut Vm, exp: Value) -> Value {
+    let q_i = vm.intern_static("list");
+    Value::Reference(vm.alloc(Object::Pair(Value::Symbol(q_i), exp, None)))
 }
 
 fn append(vm: &mut Vm, exp1: Value, exp2: Value) -> Value {
     let cdr1 = Value::Reference(vm.alloc(Object::Pair(exp2, Value::Nil, None)));
     let cdr2 = Value::Reference(vm.alloc(Object::Pair(exp1, cdr1, None)));
-    let q_i = vm.intern("list-append");
+    let q_i = vm.intern_static("list-append");
     Value::Reference(vm.alloc(Object::Pair(Value::Symbol(q_i), cdr2, None)))
+}
+
+fn rewrap(vm: &mut Vm, exp: Value, sym: &'static str) -> Value {
+    let cdr = Value::Reference(vm.alloc(Object::Pair(exp, Value::Nil, None)));
+    let q_i = vm.intern_static(sym);
+    let obj = Object::Pair(quote(vm, Value::Symbol(q_i)), cdr, None);
+    let cdr = Value::Reference(vm.alloc(obj));
+    list2(vm, cdr)
+}
+
+fn unquote(vm: &mut Vm, exp: Value) -> Value {
+    rewrap(vm, exp, "unquote")
+}
+
+fn splice(vm: &mut Vm, exp: Value) -> Value {
+    rewrap(vm, exp, "unquote-splice")
+}
+
+fn splice_bang(vm: &mut Vm, exp: Value) -> Value {
+    rewrap(vm, exp, "unquote-splice!")
+}
+
+fn back_quote(vm: &mut Vm, exp: Value) -> Value {
+    rewrap(vm, exp, "back-quote")
 }
 
 // Algorithm initially from
 // https://3e8.org/pub/scheme/doc/Quasiquotation%20in%20Lisp%20(Bawden).pdf
-fn qq_expand(vm: &mut Vm, exp: Value, line: &mut u32) -> VMResult<Value> {
+fn qq_expand(vm: &mut Vm, exp: Value, line: &mut u32, depth: u32) -> VMResult<Value> {
     let tag = Tag::new(vm);
     if tag.is_unquote(vm, exp) {
-        Ok(Tag::data(vm, exp)?)
+        if depth == 0 {
+            Ok(Tag::data(vm, exp)?)
+        } else {
+            let expand = qq_expand(vm, Tag::data(vm, exp)?, line, depth - 1)?;
+            Ok(unquote(vm, expand))
+        }
     } else if tag.is_splice(vm, exp) {
-        Err(VMError::new_compile(format!(
-            ",@ not valid here: line {}",
-            line
-        )))
+        if depth == 0 {
+            Err(VMError::new_compile(format!(
+                ",@ not valid here: line {}",
+                line
+            )))
+        } else {
+            let expand = qq_expand(vm, Tag::data(vm, exp)?, line, depth - 1)?;
+            Ok(splice(vm, expand))
+        }
     } else if tag.is_splice_bang(vm, exp) {
-        Err(VMError::new_compile(format!(
-            ",. not valid here: line {}",
-            line
-        )))
+        if depth == 0 {
+            Err(VMError::new_compile(format!(
+                ",. not valid here: line {}",
+                line
+            )))
+        } else {
+            let expand = qq_expand(vm, Tag::data(vm, exp)?, line, depth - 1)?;
+            Ok(splice_bang(vm, expand))
+        }
     } else if tag.is_backquote(vm, exp) {
-        let inner = qq_expand(vm, Tag::data(vm, exp)?, line)?;
-        Ok(qq_expand(vm, inner, line)?)
+        let inner = qq_expand(vm, Tag::data(vm, exp)?, line, depth + 1)?;
+        Ok(back_quote(vm, inner))
     } else {
         match exp {
             Value::Reference(h) => match vm.get(h) {
                 Object::Pair(car, cdr, _meta) => {
                     let car = *car;
                     let cdr = *cdr;
-                    let l1 = qq_expand_list(vm, car, line)?;
-                    //let l1 = qq_expand(vm, car, line)?;
-                    let l2 = qq_expand(vm, cdr, line)?;
+                    let l1 = qq_expand_list(vm, car, line, depth)?;
+                    let l2 = qq_expand(vm, cdr, line, depth)?;
                     Ok(append(vm, l1, l2))
                 }
-                Object::Vector(_v) => Ok(Value::Nil),
+                Object::Vector(vector) => {
+                    let mut new_vec: Vec<Value> = vector.iter().copied().collect();
+                    for i in &mut new_vec {
+                        *i = qq_expand(vm, *i, line, depth)?;
+                    }
+                    Ok(vec(vm, &new_vec[..]))
+                }
                 _ => Ok(quote(vm, exp)),
             },
             _ => Ok(quote(vm, exp)),
@@ -160,28 +223,56 @@ fn qq_expand(vm: &mut Vm, exp: Value, line: &mut u32) -> VMResult<Value> {
     }
 }
 
-fn qq_expand_list(vm: &mut Vm, exp: Value, line: &mut u32) -> VMResult<Value> {
+fn qq_expand_list(vm: &mut Vm, exp: Value, line: &mut u32, depth: u32) -> VMResult<Value> {
     let tag = Tag::new(vm);
     if tag.is_unquote(vm, exp) {
-        let data = Tag::data(vm, exp)?;
-        Ok(list(vm, data))
-    } else if tag.is_splice(vm, exp) || tag.is_splice_bang(vm, exp) {
-        Ok(Tag::data(vm, exp)?)
+        if depth == 0 {
+            let data = Tag::data(vm, exp)?;
+            Ok(list(vm, data))
+        } else {
+            let expand = qq_expand(vm, Tag::data(vm, exp)?, line, depth - 1)?;
+            let inner = unquote(vm, expand);
+            Ok(list(vm, inner))
+        }
+    } else if tag.is_splice(vm, exp) {
+        if depth == 0 {
+            Ok(Tag::data(vm, exp)?)
+        } else {
+            let expand = qq_expand(vm, Tag::data(vm, exp)?, line, depth - 1)?;
+            let inner = splice(vm, expand);
+            Ok(list(vm, inner))
+        }
+    } else if tag.is_splice_bang(vm, exp) {
+        if depth == 0 {
+            Ok(Tag::data(vm, exp)?)
+        } else {
+            let expand = qq_expand(vm, Tag::data(vm, exp)?, line, depth - 1)?;
+            let inner = splice_bang(vm, expand);
+            Ok(list(vm, inner))
+        }
     } else if tag.is_backquote(vm, exp) {
-        let inner = qq_expand(vm, Tag::data(vm, exp)?, line)?;
-        Ok(qq_expand_list(vm, inner, line)?)
+        let inner = qq_expand(vm, Tag::data(vm, exp)?, line, depth + 1)?;
+        let inner = back_quote(vm, inner);
+        Ok(list(vm, inner))
     } else {
         match exp {
             Value::Reference(h) => match vm.get(h) {
                 Object::Pair(car, cdr, _meta) => {
                     let car = *car;
                     let cdr = *cdr;
-                    let l1 = qq_expand_list(vm, car, line)?;
-                    let l2 = qq_expand(vm, cdr, line)?;
+                    let l1 = qq_expand_list(vm, car, line, depth)?;
+                    let l2 = qq_expand(vm, cdr, line, depth)?;
                     let app = append(vm, l1, l2);
                     Ok(list(vm, app))
                 }
-                Object::Vector(_v) => Ok(Value::Nil),
+                Object::Vector(vector) => {
+                    let mut new_vec: Vec<Value> = vector.iter().copied().collect();
+                    for i in &mut new_vec {
+                        *i = qq_expand(vm, *i, line, depth)?;
+                    }
+                    let vv = vec(vm, &new_vec[..]);
+                    Ok(list(vm, vv))
+                }
                 _ => {
                     let q = quote(vm, exp);
                     Ok(list(vm, q))
@@ -202,7 +293,7 @@ pub fn backquote(
     result: usize,
     line: &mut u32,
 ) -> VMResult<()> {
-    let exp = qq_expand(vm, exp, line)?;
+    let exp = qq_expand(vm, exp, line, 0)?;
     pass1(vm, state, exp)?;
     compile(vm, state, exp, result, line)?;
     Ok(())

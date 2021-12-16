@@ -18,16 +18,27 @@ use sl_liner::{Context, Prompt};
 pub mod debug;
 use debug::*;
 
+pub mod print;
+use print::*;
+
+fn value_str(vm: &mut Vm, val: Value) -> String {
+    pretty_value(vm, val)
+}
+
+fn value_dsp_str(vm: &mut Vm, val: Value) -> String {
+    display_value(vm, val)
+}
+
 fn pr(vm: &mut Vm, registers: &[Value]) -> VMResult<Value> {
     for v in registers {
-        print!("{}", v.pretty_value(vm));
+        print!("{}", value_str(vm, *v));
     }
     Ok(Value::Nil)
 }
 
 fn prn(vm: &mut Vm, registers: &[Value]) -> VMResult<Value> {
     for v in registers {
-        print!("{}", v.pretty_value(vm));
+        print!("{}", value_str(vm, *v));
     }
     println!();
     Ok(Value::Nil)
@@ -198,7 +209,9 @@ fn main() {
                         }
                         debug(&mut vm);
                     } else {
-                        println!("{}", vm.get_stack(0).display_value(&vm));
+                        //println!("{}", vm.get_stack(0).display_value(&vm));
+                        let reg = vm.get_stack(0);
+                        println!("{}", value_dsp_str(&mut vm, reg));
                     }
                 }
             }

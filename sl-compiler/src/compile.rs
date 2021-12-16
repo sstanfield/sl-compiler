@@ -1361,16 +1361,16 @@ pub fn mkconst(
     line: &mut u32,
 ) -> VMResult<()> {
     match exp {
-        Value::True => state.chunk.encode1(MREGT, result as u16, *line)?,
-        Value::False => state.chunk.encode1(MREGF, result as u16, *line)?,
-        Value::Nil => state.chunk.encode1(MREGN, result as u16, *line)?,
-        Value::Undefined => state.chunk.encode1(MREGC, result as u16, *line)?,
-        Value::Byte(i) => state.chunk.encode2(MREGB, result as u16, i as u16, *line)?,
+        Value::True => state.chunk.encode1(REGT, result as u16, *line)?,
+        Value::False => state.chunk.encode1(REGF, result as u16, *line)?,
+        Value::Nil => state.chunk.encode1(REGN, result as u16, *line)?,
+        Value::Undefined => state.chunk.encode1(REGC, result as u16, *line)?,
+        Value::Byte(i) => state.chunk.encode2(REGB, result as u16, i as u16, *line)?,
         Value::Int(i) if i >= 0 && i <= u16::MAX as i64 => {
-            state.chunk.encode2(MREGI, result as u16, i as u16, *line)?;
+            state.chunk.encode2(REGI, result as u16, i as u16, *line)?;
         }
         Value::UInt(i) if i <= u16::MAX as u64 => {
-            state.chunk.encode2(MREGU, result as u16, i as u16, *line)?;
+            state.chunk.encode2(REGU, result as u16, i as u16, *line)?;
         }
         _ => {
             let const_i = state.add_constant(exp);
@@ -1427,16 +1427,16 @@ pub fn compile(
                 state.chunk.encode_refi(result as u16, const_i, *line)?;
             }
         }
-        Value::True => state.chunk.encode1(MREGT, result as u16, *line)?,
-        Value::False => state.chunk.encode1(MREGF, result as u16, *line)?,
-        Value::Nil => state.chunk.encode1(MREGN, result as u16, *line)?,
-        Value::Undefined => state.chunk.encode1(MREGC, result as u16, *line)?,
-        Value::Byte(i) => state.chunk.encode2(MREGB, result as u16, i as u16, *line)?,
+        Value::True => state.chunk.encode1(REGT, result as u16, *line)?,
+        Value::False => state.chunk.encode1(REGF, result as u16, *line)?,
+        Value::Nil => state.chunk.encode1(REGN, result as u16, *line)?,
+        Value::Undefined => state.chunk.encode1(REGC, result as u16, *line)?,
+        Value::Byte(i) => state.chunk.encode2(REGB, result as u16, i as u16, *line)?,
         Value::Int(i) if i >= 0 && i <= u16::MAX as i64 => {
-            state.chunk.encode2(MREGI, result as u16, i as u16, *line)?
+            state.chunk.encode2(REGI, result as u16, i as u16, *line)?
         }
         Value::UInt(i) if i <= u16::MAX as u64 => {
-            state.chunk.encode2(MREGU, result as u16, i as u16, *line)?
+            state.chunk.encode2(REGU, result as u16, i as u16, *line)?
         }
         _ => {
             let const_i = state.add_constant(exp);
