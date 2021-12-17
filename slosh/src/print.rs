@@ -64,18 +64,18 @@ fn list_out(vm: &Vm, res: &mut String, lst: Value) {
         match cdr {
             Value::Reference(h) => match vm.get(h) {
                 Object::Pair(car, ncdr, _) => {
-                    res.push_str(&car.display_value(vm));
+                    res.push_str(&display_value(vm, *car));
                     cdr = *ncdr;
                 }
                 _ => {
                     res.push_str(". ");
-                    res.push_str(&cdr.display_value(vm));
+                    res.push_str(&display_value(vm, cdr));
                     break;
                 }
             },
             _ => {
                 res.push_str(". ");
-                res.push_str(&cdr.display_value(vm));
+                res.push_str(&display_value(vm, cdr));
                 break;
             }
         }
