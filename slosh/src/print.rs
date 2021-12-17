@@ -37,18 +37,52 @@ fn quotey(vm: &Vm, car: Value, buf: &mut String) -> bool {
     }
 }
 
-pub fn display_value(vm: &Vm, val: Value) -> String {
-    fn list_out(vm: &Vm, res: &mut String, itr: &mut dyn Iterator<Item = Value>) {
-        let mut first = true;
-        for p in itr {
-            if !first {
-                res.push(' ');
-            } else {
-                first = false;
+fn list_out_iter(vm: &Vm, res: &mut String, itr: &mut dyn Iterator<Item = Value>) {
+    let mut first = true;
+    for p in itr {
+        if !first {
+            res.push(' ');
+        } else {
+            first = false;
+        }
+        res.push_str(&display_value(vm, p));
+    }
+}
+
+fn list_out(vm: &Vm, res: &mut String, lst: Value) {
+    let mut first = true;
+    let mut cdr = lst;
+    loop {
+        if let Value::Nil = cdr {
+            break;
+        }
+        if !first {
+            res.push(' ');
+        } else {
+            first = false;
+        }
+        match cdr {
+            Value::Reference(h) => match vm.get(h) {
+                Object::Pair(car, ncdr, _) => {
+                    res.push_str(&car.display_value(vm));
+                    cdr = *ncdr;
+                }
+                _ => {
+                    res.push_str(". ");
+                    res.push_str(&cdr.display_value(vm));
+                    break;
+                }
+            },
+            _ => {
+                res.push_str(". ");
+                res.push_str(&cdr.display_value(vm));
+                break;
             }
-            res.push_str(&display_value(vm, p));
         }
     }
+}
+
+pub fn display_value(vm: &Vm, val: Value) -> String {
     match &val {
         Value::True => "true".to_string(),
         Value::False => "false".to_string(),
@@ -76,7 +110,7 @@ pub fn display_value(vm: &Vm, val: Value) -> String {
             Object::Vector(v) => {
                 let mut res = String::new();
                 res.push_str("#(");
-                list_out(vm, &mut res, &mut v.iter().copied());
+                list_out_iter(vm, &mut res, &mut v.iter().copied());
                 res.push(')');
                 res
             }
@@ -90,15 +124,13 @@ pub fn display_value(vm: &Vm, val: Value) -> String {
                     }
                 } else {
                     res.push('(');
-                    list_out(vm, &mut res, &mut val.iter(vm));
+                    list_out(vm, &mut res, val);
                     res.push(')');
                 }
                 res
             }
             Object::String(s) => format!("\"{}\"", s),
             Object::Bytes(_) => "Bytes".to_string(), // XXX TODO
-                                                     //Object::HashMap(_) => "HashMap".to_string(),
-                                                     //Object::File(_) => "File".to_string(),
         },
     }
 }

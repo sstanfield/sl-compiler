@@ -612,7 +612,7 @@ fn compile_cons(
                 LIST,
                 result as u16,
                 (result + 1) as u16,
-                (result + max + 1) as u16,
+                (result + max) as u16,
                 *line,
             )?;
         }
@@ -627,7 +627,7 @@ fn compile_cons(
                 APND,
                 result as u16,
                 (result + 1) as u16,
-                (result + max + 1) as u16,
+                (result + max) as u16,
                 *line,
             )?;
         }

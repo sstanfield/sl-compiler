@@ -206,8 +206,12 @@ fn qq_expand(vm: &mut Vm, exp: Value, line: &mut u32, depth: u32) -> VMResult<Va
                     let car = *car;
                     let cdr = *cdr;
                     let l1 = qq_expand_list(vm, car, line, depth)?;
-                    let l2 = qq_expand(vm, cdr, line, depth)?;
-                    Ok(append(vm, l1, l2))
+                    if cdr.is_nil() {
+                        Ok(l1)
+                    } else {
+                        let l2 = qq_expand(vm, cdr, line, depth)?;
+                        Ok(append(vm, l1, l2))
+                    }
                 }
                 Object::Vector(vector) => {
                     let mut new_vec: Vec<Value> = vector.iter().copied().collect();
@@ -261,9 +265,13 @@ fn qq_expand_list(vm: &mut Vm, exp: Value, line: &mut u32, depth: u32) -> VMResu
                     let car = *car;
                     let cdr = *cdr;
                     let l1 = qq_expand_list(vm, car, line, depth)?;
-                    let l2 = qq_expand(vm, cdr, line, depth)?;
-                    let app = append(vm, l1, l2);
-                    Ok(list(vm, app))
+                    if cdr.is_nil() {
+                        Ok(list(vm, l1))
+                    } else {
+                        let l2 = qq_expand(vm, cdr, line, depth)?;
+                        let app = append(vm, l1, l2);
+                        Ok(list(vm, app))
+                    }
                 }
                 Object::Vector(vector) => {
                     let mut new_vec: Vec<Value> = vector.iter().copied().collect();
@@ -294,6 +302,7 @@ pub fn backquote(
     line: &mut u32,
 ) -> VMResult<()> {
     let exp = qq_expand(vm, exp, line, 0)?;
+    //println!("XXXX {}", exp.display_value(vm));
     pass1(vm, state, exp)?;
     compile(vm, state, exp, result, line)?;
     Ok(())
