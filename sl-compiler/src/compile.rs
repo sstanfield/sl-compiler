@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -158,34 +159,35 @@ fn compile_call_myself(
     Ok(())
 }
 
+fn get_args_iter<'vm>(
+    vm: &'vm Vm,
+    args: Value,
+    obj: &Object,
+    line: &mut u32,
+) -> VMResult<Box<dyn Iterator<Item = Value> + 'vm>> {
+    match obj {
+        Object::Pair(_car, _cdr, meta) => {
+            if let Some(meta) = meta {
+                *line = meta.line as u32;
+            }
+            Ok(args.iter(vm))
+        }
+        Object::Vector(_v) => Ok(args.iter(vm)),
+        _ => {
+            return Err(VMError::new_compile(format!(
+                "Malformed fn, invalid args, {:?}.",
+                obj
+            )));
+        }
+    }
+}
+
 fn mk_state(
     vm: &mut Vm,
     state: &mut CompileState,
     args: Value,
     line: &mut u32,
 ) -> VMResult<(CompileState, Option<Vec<Value>>)> {
-    fn get_args_iter<'vm>(
-        vm: &'vm Vm,
-        args: Value,
-        obj: &Object,
-        line: &mut u32,
-    ) -> VMResult<Box<dyn Iterator<Item = Value> + 'vm>> {
-        match obj {
-            Object::Pair(_car, _cdr, meta) => {
-                if let Some(meta) = meta {
-                    *line = meta.line as u32;
-                }
-                Ok(args.iter(vm))
-            }
-            Object::Vector(_v) => Ok(args.iter(vm)),
-            _ => {
-                return Err(VMError::new_compile(format!(
-                    "Malformed fn, invalid args, {:?}.",
-                    obj
-                )));
-            }
-        }
-    }
     match args {
         Value::Reference(h) => {
             let mut new_state = CompileState::new_state(
@@ -1061,6 +1063,93 @@ fn compile_set(
     Ok(())
 }
 
+fn compile_let(
+    vm: &mut Vm,
+    state: &mut CompileState,
+    cdr: &[Value],
+    result: usize,
+    line: &mut u32,
+    star: bool,
+) -> VMResult<()> {
+    if cdr.is_empty() {
+        return Err(VMError::new_compile(
+            "Too few arguments, need at least 1 got 0.",
+        ));
+    }
+    let symbols = Rc::new(RefCell::new(Symbols::with_let(
+        state.symbols.clone(),
+        result,
+    )));
+    let old_symbols = state.symbols.clone();
+    if star {
+        state.symbols = symbols.clone();
+    }
+    let old_tail = state.tail;
+    state.tail = false;
+    let mut cdr_iter = cdr.iter();
+    let args = cdr_iter.next().unwrap(); // unwrap safe, length is at least 1
+    let mut opt_comps: Vec<(usize, Value)> = Vec::new();
+    let mut used_regs = 0;
+    match args {
+        Value::Reference(h) => {
+            let obj = vm.get(*h);
+            let args_iter = get_args_iter(vm, *args, obj, line)?;
+            // XXX fixme
+            //new_state.chunk.dbg_args = Some(Vec::new());
+            for a in args_iter {
+                used_regs += 1;
+                match a {
+                    Value::Reference(h) => {
+                        let obj = vm.get(h);
+                        let mut args_iter = get_args_iter(vm, a, obj, line)?;
+                        if let Some(Value::Symbol(i)) = args_iter.next() {
+                            let reg = symbols.borrow_mut().insert(i) + 1;
+                            if let Some(dbg_args) = state.chunk.dbg_args.as_mut() {
+                                dbg_args.push(i);
+                            }
+                            if let Some(r) = args_iter.next() {
+                                opt_comps.push((reg, r));
+                            } else {
+                                opt_comps.push((reg, Value::Nil));
+                            }
+                            // XXX Check to make sure only two elements...
+                        }
+                    }
+                    _ => return Err(VMError::new_compile("let: invalid args.")),
+                }
+            }
+        }
+        Value::Nil => {}
+        _ => {
+            return Err(VMError::new_compile(format!(
+                "let: Invalid bindings, {:?}.",
+                args
+            )))
+        }
+    }
+    for (reg, val) in opt_comps {
+        compile(vm, state, val, reg, line)?;
+    }
+    if !star {
+        state.symbols = symbols;
+    }
+    let last_thing = cdr.len() - 2;
+    for (i, r) in cdr_iter.enumerate() {
+        if i == last_thing {
+            state.tail = old_tail;
+        }
+        compile(vm, state, *r, result + used_regs, line)?;
+    }
+    if used_regs > 0 {
+        state
+            .chunk
+            .encode2(MOV, result as u16, (result + used_regs) as u16, *line)?;
+    }
+    state.tail = old_tail;
+    state.symbols = old_symbols;
+    Ok(())
+}
+
 fn compile_list(
     vm: &mut Vm,
     state: &mut CompileState,
@@ -1233,6 +1322,12 @@ fn compile_list(
                 state
                     .chunk
                     .encode3(STR, result as u16, (result + 1) as u16, max as u16, *line)?;
+            }
+            Value::Symbol(i) if i == state.specials.let_ => {
+                compile_let(vm, state, cdr, result, line, false)?;
+            }
+            Value::Symbol(i) if i == state.specials.letstar => {
+                compile_let(vm, state, cdr, result, line, true)?;
             }
             Value::Symbol(i) => {
                 if let Some(idx) = state.get_symbol(i) {

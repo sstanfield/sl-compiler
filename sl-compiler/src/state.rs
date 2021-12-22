@@ -45,6 +45,28 @@ impl Symbols {
         }
     }
 
+    pub fn with_let(source: Rc<RefCell<Symbols>>, result: usize) -> Symbols {
+        let data = Rc::new(RefCell::new(SymbolsInt {
+            syms: HashMap::with_hasher(BuildInternedHasher::new()),
+            count: 0,
+        }));
+        {
+            let mut datad = data.borrow_mut();
+            for (key, val) in source.borrow().data.borrow().syms.iter() {
+                datad.syms.insert(*key, *val);
+            }
+            if result > 0 {
+                datad.count = result - 1;
+            }
+        }
+        Symbols {
+            data,
+            outer: source.borrow().outer.clone(),
+            //namespace,
+            captures: source.borrow().captures.clone(),
+        }
+    }
+
     pub fn is_empty(&self) -> bool {
         self.data.borrow().syms.is_empty()
     }
@@ -166,6 +188,8 @@ pub struct Specials {
     pub vec_len: Interned,
     pub vec_clr: Interned,
     pub str_: Interned,
+    pub let_: Interned,
+    pub letstar: Interned,
 
     pub rest: Interned,
 }
@@ -218,6 +242,8 @@ impl Specials {
             vec_len: vm.intern_static("vec-len"),
             vec_clr: vm.intern_static("vec-clear!"),
             str_: vm.intern_static("str"),
+            let_: vm.intern_static("let"),
+            letstar: vm.intern_static("let*"),
 
             rest: vm.intern_static("&rest"),
         }
