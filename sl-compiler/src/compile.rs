@@ -1338,7 +1338,7 @@ fn compile_list(
                     // not callable (dynamic is fun).
                     let global = vm.get_global(slot);
                     if let Value::Undefined = global {
-                        eprintln!("Warning: {} not defined.", vm.get_interned(i));
+                        eprintln!("Warning: {} not defined.", i.as_string());
                     }
                     let mut mac = None;
                     if let Value::Reference(h) = global {

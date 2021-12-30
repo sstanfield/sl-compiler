@@ -90,9 +90,9 @@ pub fn display_value(vm: &Vm, val: Value) -> String {
         Value::Int(i) => format!("{}", i),
         Value::UInt(i) => format!("{}", i),
         Value::Byte(b) => format!("{}", b),
-        Value::Symbol(i) => vm.get_interned(*i).to_string(),
-        Value::Keyword(i) => format!(":{}", vm.get_interned(*i).to_string()),
-        Value::StringConst(i) => format!("\"{}\"", vm.get_interned(*i).to_string()),
+        Value::Symbol(i) => i.as_string().to_string(),
+        Value::Keyword(i) => format!(":{}", i.as_string()),
+        Value::StringConst(i) => format!("\"{}\"", i.as_string()),
         Value::CodePoint(ch) => format!("#\\{}", ch),
         Value::CharCluster(l, c) => {
             format!("#\\{}", String::from_utf8_lossy(&c[0..*l as usize]))
@@ -137,7 +137,7 @@ pub fn display_value(vm: &Vm, val: Value) -> String {
 
 pub fn pretty_value(vm: &Vm, val: Value) -> String {
     match &val {
-        Value::StringConst(i) => vm.get_interned(*i).to_string(),
+        Value::StringConst(i) => i.as_string().to_string(),
         Value::CodePoint(ch) => format!("{}", ch),
         Value::CharCluster(l, c) => {
             format!("{}", String::from_utf8_lossy(&c[0..*l as usize]))

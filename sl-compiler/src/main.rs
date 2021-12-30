@@ -68,7 +68,7 @@ fn main() {
                 line = meta.line as u32;
             }
         }
-        let file_name = vm.get_interned(file_i);
+        let file_name = file_i.as_string();
         let mut state = CompileState::new_state(&mut vm, file_name, line, None);
         state.chunk.dbg_args = Some(Vec::new());
         pass1(&mut vm, &mut state, exp).unwrap();

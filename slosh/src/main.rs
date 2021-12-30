@@ -75,7 +75,7 @@ fn load(vm: &mut Vm, registers: &[Value]) -> VMResult<Value> {
     let name;
     match registers[0].unref(vm) {
         Value::StringConst(i) => {
-            name = vm.get_interned(i);
+            name = i.as_string();
         }
         Value::Reference(h) => {
             let obj = vm.get(h);
@@ -83,7 +83,7 @@ fn load(vm: &mut Vm, registers: &[Value]) -> VMResult<Value> {
                 Object::String(s) => {
                     let s = s.to_string();
                     let s_i = vm.intern(&s);
-                    name = vm.get_interned(s_i);
+                    name = s_i.as_string();
                 }
                 _ => return Err(VMError::new_vm("load: Not a string.")),
             }
