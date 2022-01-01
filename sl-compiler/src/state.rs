@@ -9,7 +9,7 @@ use slvm::vm::*;
 
 #[derive(Clone, Debug)]
 pub struct SymbolsInt {
-    pub syms: HashMap<Interned, usize, BuildInternedHasher>,
+    pub syms: HashMap<Interned, usize>,
     count: usize,
 }
 
@@ -34,7 +34,7 @@ pub struct Symbols {
 impl Symbols {
     pub fn with_outer(outer: Option<Rc<RefCell<Symbols>>>) -> Symbols {
         let data = Rc::new(RefCell::new(SymbolsInt {
-            syms: HashMap::with_hasher(BuildInternedHasher::new()),
+            syms: HashMap::new(),
             count: 0,
         }));
         Symbols {
@@ -47,7 +47,7 @@ impl Symbols {
 
     pub fn with_let(source: Rc<RefCell<Symbols>>, result: usize) -> Symbols {
         let data = Rc::new(RefCell::new(SymbolsInt {
-            syms: HashMap::with_hasher(BuildInternedHasher::new()),
+            syms: HashMap::new(),
             count: 0,
         }));
         {
