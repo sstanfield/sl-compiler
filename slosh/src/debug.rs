@@ -20,7 +20,7 @@ fn dump_regs(vm: &Vm, frame: &CallFrame) {
             "params/result"
         } else if let Some(reg_names) = reg_names.as_mut() {
             if let Some(n) = reg_names.next() {
-                n.as_string()
+                vm.get_interned(*n)
             } else {
                 "[SCRATCH]"
             }
