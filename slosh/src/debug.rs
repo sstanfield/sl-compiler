@@ -3,6 +3,7 @@ extern crate sl_liner;
 use std::io::ErrorKind;
 use std::iter::*;
 
+use slvm::heap::*;
 use slvm::value::*;
 use slvm::vm::*;
 

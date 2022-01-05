@@ -107,6 +107,7 @@ pub fn display_value(vm: &Vm, val: Value) -> String {
             Object::Lambda(_) => "#<Lambda>".to_string(),
             Object::Macro(_) => "#<Macro>".to_string(),
             Object::Closure(_, _) => "#<Lambda>".to_string(),
+            Object::Continuation(_) => "#<Continuation>".to_string(),
             Object::Vector(v) => {
                 let mut res = String::new();
                 res.push_str("#(");

@@ -190,6 +190,7 @@ pub struct Specials {
     pub str_: Interned,
     pub let_: Interned,
     pub letstar: Interned,
+    pub call_cc: Interned,
 
     pub rest: Interned,
 }
@@ -244,6 +245,7 @@ impl Specials {
             str_: vm.intern_static("str"),
             let_: vm.intern_static("let"),
             letstar: vm.intern_static("let*"),
+            call_cc: vm.intern_static("call/cc"),
 
             rest: vm.intern_static("&rest"),
         }

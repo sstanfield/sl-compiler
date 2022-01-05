@@ -1329,6 +1329,15 @@ fn compile_list(
             Value::Symbol(i) if i == state.specials.letstar => {
                 compile_let(vm, state, cdr, result, line, true)?;
             }
+            Value::Symbol(i) if i == state.specials.call_cc => {
+                if cdr.len() != 1 {
+                    return Err(VMError::new_compile("Requires one argument."));
+                }
+                compile(vm, state, cdr[0], result, line)?;
+                state
+                    .chunk
+                    .encode2(CCC, result as u16, result as u16, *line)?;
+            }
             Value::Symbol(i) => {
                 if let Some(idx) = state.get_symbol(i) {
                     compile_call_reg(vm, state, (idx + 1) as u16, cdr, result, line)?
