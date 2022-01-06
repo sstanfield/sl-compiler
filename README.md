@@ -66,9 +66,9 @@ Note these are all compiled to bytecode and once compiled are not dynamic anymor
 - =
 - /=
 - <
-- \<=
+- <=
 - \>
-- >=
+- \>=
 - eq?
 - equal?
 
