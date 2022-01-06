@@ -41,9 +41,9 @@ Note these are all compiled to bytecode and once compiled are not dynamic anymor
 - recur
 - this-fn
 - type
-- +
-- -
-- *
+- \+
+- \-
+- \*
 - /
 - inc!
 - dec!
@@ -66,8 +66,8 @@ Note these are all compiled to bytecode and once compiled are not dynamic anymor
 - =
 - /=
 - <
-- <=
-- >
+- \<=
+- \>
 - >=
 - eq?
 - equal?
