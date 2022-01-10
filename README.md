@@ -34,7 +34,7 @@ The following special forms are currently in the compiler:
 - let*
 - call/cc
 
-### Compiled forms
+### Compiled Forms
 Normal forms follow normal calling evaluation.
 Note: These are all compiled to bytecode and once compiled are not dynamic anymore.
 - not
@@ -86,7 +86,7 @@ Note: These are all compiled to bytecode and once compiled are not dynamic anymo
 ## slosh
 Slosh is the prototype language and REPL using sl-compiler and slvm.
 
-### Built-in forms
+### Built-in Forms
 These forms (written in Rust but callable from Lisp) are supported.
 - pr (print)
 - prn (println)
