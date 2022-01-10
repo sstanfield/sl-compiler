@@ -35,8 +35,8 @@ The following special forms are currently in the compiler:
 - call/cc
 
 ### Compiled forms
-Not special- follow normal calling evaluation
-Note these are all compiled to bytecode and once compiled are not dynamic anymore
+Normal forms follow normal calling evaluation.
+Note: These are all compiled to bytecode and once compiled are not dynamic anymore.
 - not
 - recur
 - this-fn
@@ -73,21 +73,21 @@ Note these are all compiled to bytecode and once compiled are not dynamic anymor
 - equal?
 
 ### Features
-- Lisp Reader
+- Lisp reader
 - Lisp lists (pair/concell based)
 - Vectors
 - Tail call optimization
 - Continuations (call/cc)
 - Lambda/Closures
-- Garbage Collection (still WIP)
+- Garbage collection (still WIP)
 - Lisp back quotes (including nested back quotes)
 - Macros
 
 ## slosh
 Slosh is the prototype language and REPL using sl-compiler and slvm.
 
-### Builtins
-These builtins (written in Rust but callable from Lisp) are added.
+### Built-in forms
+These forms (written in Rust but callable from Lisp) are supported.
 - pr (print)
 - prn (println)
 - dasm (disassemble a lambda or closure)
