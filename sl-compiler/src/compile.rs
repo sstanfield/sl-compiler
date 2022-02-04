@@ -79,7 +79,7 @@ fn compile_call(
 ) -> VMResult<()> {
     let b_reg = result + cdr.len() + 1;
     let const_i = state.add_constant(callable);
-    let tail = state.tail;
+    let tail = state.tail && state.defers == 0;
     state.tail = false;
     compile_params(vm, state, cdr, result, tail, line)?;
     state
@@ -105,7 +105,7 @@ fn compile_callg(
     result: usize,
     line: &mut u32,
 ) -> VMResult<()> {
-    let tail = state.tail;
+    let tail = state.tail && state.defers == 0;
     state.tail = false;
     compile_params(vm, state, cdr, result, tail, line)?;
     if tail {
@@ -126,7 +126,7 @@ fn compile_call_reg(
     result: usize,
     line: &mut u32,
 ) -> VMResult<()> {
-    let tail = state.tail;
+    let tail = state.tail && state.defers == 0;
     state.tail = false;
     compile_params(vm, state, cdr, result, tail, line)?;
     if tail {
@@ -145,8 +145,9 @@ fn compile_call_myself(
     cdr: &[Value],
     result: usize,
     line: &mut u32,
+    force_tail: bool,
 ) -> VMResult<()> {
-    let tail = state.tail;
+    let tail = force_tail || (state.tail && state.defers == 0);
     state.tail = false;
     compile_params(vm, state, cdr, result, tail, line)?;
     if tail {
@@ -1071,83 +1072,102 @@ fn compile_let(
     line: &mut u32,
     star: bool,
 ) -> VMResult<()> {
+    fn inner(
+        vm: &mut Vm,
+        state: &mut CompileState,
+        cdr: &[Value],
+        result: usize,
+        line: &mut u32,
+        star: bool,
+        old_tail: bool,
+    ) -> VMResult<()> {
+        let symbols = Rc::new(RefCell::new(Symbols::with_let(
+            state.symbols.clone(),
+            result,
+        )));
+        if star {
+            state.symbols = symbols.clone();
+        }
+        let mut cdr_iter = cdr.iter();
+        let args = cdr_iter.next().unwrap(); // unwrap safe, length is at least 1
+        let mut opt_comps: Vec<(usize, Value)> = Vec::new();
+        let mut used_regs = 0;
+        match args {
+            Value::Reference(h) => {
+                let obj = vm.get(*h);
+                let args_iter = get_args_iter(vm, *args, obj, line)?;
+                // XXX fixme
+                //new_state.chunk.dbg_args = Some(Vec::new());
+                for a in args_iter {
+                    used_regs += 1;
+                    match a {
+                        Value::Reference(h) => {
+                            let obj = vm.get(h);
+                            let mut args_iter = get_args_iter(vm, a, obj, line)?;
+                            if let Some(Value::Symbol(i)) = args_iter.next() {
+                                let reg = symbols.borrow_mut().insert(i) + 1;
+                                if let Some(dbg_args) = state.chunk.dbg_args.as_mut() {
+                                    dbg_args.push(i);
+                                }
+                                if let Some(r) = args_iter.next() {
+                                    opt_comps.push((reg, r));
+                                } else {
+                                    opt_comps.push((reg, Value::Nil));
+                                }
+                                // XXX Check to make sure only two elements...
+                            }
+                        }
+                        _ => return Err(VMError::new_compile("let: invalid args.")),
+                    }
+                }
+            }
+            Value::Nil => {}
+            _ => {
+                return Err(VMError::new_compile(format!(
+                    "let: Invalid bindings, {:?}.",
+                    args
+                )))
+            }
+        }
+        for (reg, val) in opt_comps {
+            compile(vm, state, val, reg, line)?;
+        }
+        if !star {
+            state.symbols = symbols;
+        }
+        let last_thing = cdr.len() - 2;
+        for (i, r) in cdr_iter.enumerate() {
+            if i == last_thing {
+                state.tail = old_tail;
+            }
+            compile(vm, state, *r, result + used_regs, line)?;
+        }
+        if used_regs > 0 {
+            state
+                .chunk
+                .encode2(MOV, result as u16, (result + used_regs) as u16, *line)?;
+        }
+        for _ in 0..state.defers {
+            state.chunk.encode0(DFRPOP, *line)?;
+        }
+        Ok(())
+    }
+
     if cdr.is_empty() {
         return Err(VMError::new_compile(
             "Too few arguments, need at least 1 got 0.",
         ));
     }
-    let symbols = Rc::new(RefCell::new(Symbols::with_let(
-        state.symbols.clone(),
-        result,
-    )));
     let old_symbols = state.symbols.clone();
-    if star {
-        state.symbols = symbols.clone();
-    }
     let old_tail = state.tail;
     state.tail = false;
-    let mut cdr_iter = cdr.iter();
-    let args = cdr_iter.next().unwrap(); // unwrap safe, length is at least 1
-    let mut opt_comps: Vec<(usize, Value)> = Vec::new();
-    let mut used_regs = 0;
-    match args {
-        Value::Reference(h) => {
-            let obj = vm.get(*h);
-            let args_iter = get_args_iter(vm, *args, obj, line)?;
-            // XXX fixme
-            //new_state.chunk.dbg_args = Some(Vec::new());
-            for a in args_iter {
-                used_regs += 1;
-                match a {
-                    Value::Reference(h) => {
-                        let obj = vm.get(h);
-                        let mut args_iter = get_args_iter(vm, a, obj, line)?;
-                        if let Some(Value::Symbol(i)) = args_iter.next() {
-                            let reg = symbols.borrow_mut().insert(i) + 1;
-                            if let Some(dbg_args) = state.chunk.dbg_args.as_mut() {
-                                dbg_args.push(i);
-                            }
-                            if let Some(r) = args_iter.next() {
-                                opt_comps.push((reg, r));
-                            } else {
-                                opt_comps.push((reg, Value::Nil));
-                            }
-                            // XXX Check to make sure only two elements...
-                        }
-                    }
-                    _ => return Err(VMError::new_compile("let: invalid args.")),
-                }
-            }
-        }
-        Value::Nil => {}
-        _ => {
-            return Err(VMError::new_compile(format!(
-                "let: Invalid bindings, {:?}.",
-                args
-            )))
-        }
-    }
-    for (reg, val) in opt_comps {
-        compile(vm, state, val, reg, line)?;
-    }
-    if !star {
-        state.symbols = symbols;
-    }
-    let last_thing = cdr.len() - 2;
-    for (i, r) in cdr_iter.enumerate() {
-        if i == last_thing {
-            state.tail = old_tail;
-        }
-        compile(vm, state, *r, result + used_regs, line)?;
-    }
-    if used_regs > 0 {
-        state
-            .chunk
-            .encode2(MOV, result as u16, (result + used_regs) as u16, *line)?;
-    }
+    let old_defers = state.defers;
+    state.defers = 0;
+    let result = inner(vm, state, cdr, result, line, star, old_tail);
     state.tail = old_tail;
     state.symbols = old_symbols;
-    Ok(())
+    state.defers = old_defers;
+    result
 }
 
 fn compile_list(
@@ -1222,16 +1242,16 @@ fn compile_list(
                 backquote(vm, state, cdr[0], result, line)?;
             }
             Value::Symbol(i) if i == state.specials.recur => {
-                if !state.tail {
+                /*if !state.tail {
                     return Err(VMError::new_compile(format!(
                         "recur not in tail position, line {}",
                         line
                     )));
-                }
-                compile_call_myself(vm, state, cdr, result, line)?
+                }*/
+                compile_call_myself(vm, state, cdr, result, line, true)?
             }
             Value::Symbol(i) if i == state.specials.this_fn => {
-                compile_call_myself(vm, state, cdr, result, line)?
+                compile_call_myself(vm, state, cdr, result, line, false)?
             }
             Value::Symbol(i) if i == state.specials.eq => {
                 if cdr.len() <= 1 {
@@ -1337,6 +1357,17 @@ fn compile_list(
                 state
                     .chunk
                     .encode2(CCC, result as u16, result as u16, *line)?;
+            }
+            Value::Symbol(i) if i == state.specials.defer => {
+                if !cdr.is_empty() {
+                    compile_fn(vm, state, Value::Nil, &cdr[0..], result, line)?;
+                    state.chunk.encode1(DFR, result as u16, *line)?;
+                    state.defers += 1;
+                } else {
+                    return Err(VMError::new_compile(
+                        "Malformed defer form, need at least one form.",
+                    ));
+                }
             }
             Value::Symbol(i) => {
                 if let Some(idx) = state.get_symbol(i) {

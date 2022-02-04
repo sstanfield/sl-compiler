@@ -96,7 +96,7 @@ pub fn debug(vm: &mut Vm) {
                         if let Some(parm) = exps.next() {
                             if let Ok(stk_idx) = parm.get_int() {
                                 let stk_idx = stk_idx.abs() as usize;
-                                for (i, frame) in vm.get_call_stack().iter().rev().enumerate() {
+                                for (i, frame) in vm.get_call_stack().enumerate() {
                                     if i + 1 == stk_idx {
                                         if let Err(e) = frame.chunk.disassemble_chunk(vm, 0) {
                                             println!("Error in disassembly: {}", e);
@@ -119,7 +119,7 @@ pub fn debug(vm: &mut Vm) {
                         if let Some(parm) = exps.next() {
                             if let Ok(stk_idx) = parm.get_int() {
                                 let stk_idx = stk_idx.abs() as usize;
-                                for (i, frame) in vm.get_call_stack().iter().rev().enumerate() {
+                                for (i, frame) in vm.get_call_stack().enumerate() {
                                     if i + 1 == stk_idx {
                                         dump_regs(vm, frame);
                                         break;
@@ -140,7 +140,7 @@ pub fn debug(vm: &mut Vm) {
                             let line = frame.chunk.offset_to_line(ip).unwrap_or(0);
                             println!("{} line: {} ip: {:#010x}", frame.chunk.file_name, line, ip);
                         }
-                        for frame in vm.get_call_stack().iter().rev() {
+                        for frame in vm.get_call_stack() {
                             let ip = frame.current_ip;
                             let line = frame.chunk.offset_to_line(ip).unwrap_or(0);
                             println!("{} line: {} ip: {:#010x}", frame.chunk.file_name, line, ip);

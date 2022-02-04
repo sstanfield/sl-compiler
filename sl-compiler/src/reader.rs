@@ -183,7 +183,7 @@ fn do_char(
     let ntext = unsafe { &*(symbol as *const str) };
     let mut chars: CharIter = Box::new(
         UnicodeSegmentation::graphemes(ntext, true)
-            .map(|s| Cow::Borrowed(s))
+            .map(Cow::Borrowed)
             .peekable(),
     );
     if let Some(ch) = chars.next() {
@@ -1241,7 +1241,7 @@ pub fn read_all(
     let ntext = unsafe { &*(text as *const str) };
     let mut chars: CharIter = Box::new(
         UnicodeSegmentation::graphemes(ntext, true)
-            .map(|s| Cow::Borrowed(s))
+            .map(Cow::Borrowed)
             .peekable(),
     );
     if text.starts_with("#!") {

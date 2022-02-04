@@ -191,6 +191,7 @@ pub struct Specials {
     pub let_: Interned,
     pub letstar: Interned,
     pub call_cc: Interned,
+    pub defer: Interned,
 
     pub rest: Interned,
 }
@@ -246,6 +247,7 @@ impl Specials {
             let_: vm.intern_static("let"),
             letstar: vm.intern_static("let*"),
             call_cc: vm.intern_static("call/cc"),
+            defer: vm.intern_static("defer"),
 
             rest: vm.intern_static("&rest"),
         }
@@ -259,6 +261,7 @@ pub struct CompileState {
     pub specials: Specials,
     pub max_regs: usize,
     pub tail: bool,
+    pub defers: usize,
 }
 
 impl CompileState {
@@ -270,6 +273,7 @@ impl CompileState {
             specials: Specials::new(vm),
             max_regs: 0,
             tail: false,
+            defers: 0,
         }
     }
 
@@ -287,6 +291,7 @@ impl CompileState {
             specials: Specials::new(vm),
             max_regs: 0,
             tail: false,
+            defers: 0,
         }
     }
 
@@ -298,6 +303,7 @@ impl CompileState {
             specials: Specials::new(vm),
             max_regs: state.max_regs,
             tail: state.tail,
+            defers: state.defers,
         }
     }
 
