@@ -1081,6 +1081,7 @@ fn compile_let(
         star: bool,
         old_tail: bool,
     ) -> VMResult<()> {
+        let start_defers = state.defers;
         let symbols = Rc::new(RefCell::new(Symbols::with_let(
             state.symbols.clone(),
             result,
@@ -1147,7 +1148,7 @@ fn compile_let(
                 .chunk
                 .encode2(MOV, result as u16, (result + used_regs) as u16, *line)?;
         }
-        for _ in 0..state.defers {
+        for _ in start_defers..state.defers {
             state.chunk.encode0(DFRPOP, *line)?;
         }
         Ok(())
@@ -1162,7 +1163,6 @@ fn compile_let(
     let old_tail = state.tail;
     state.tail = false;
     let old_defers = state.defers;
-    state.defers = 0;
     let result = inner(vm, state, cdr, result, line, star, old_tail);
     state.tail = old_tail;
     state.symbols = old_symbols;
