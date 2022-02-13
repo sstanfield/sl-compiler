@@ -1366,9 +1366,9 @@ mod tests {
         vm: &mut Vm,
         reader_state: &mut ReaderState,
         input: &str,
-        name: Option<&'static str>,
+        _name: Option<&'static str>,
     ) -> Vec<String> {
-        let exp = read(vm, reader_state, input, name, false);
+        let exp = read(vm, reader_state, input, false);
         let mut tokens = Vec::new();
         if let Ok(exp) = exp {
             to_strs(vm, &mut tokens, exp);
@@ -1383,9 +1383,9 @@ mod tests {
         vm: &mut Vm,
         reader_state: &mut ReaderState,
         input: &str,
-        name: Option<&'static str>,
+        _name: Option<&'static str>,
     ) -> ReadError {
-        let exp = read(vm, reader_state, input, name, false);
+        let exp = read(vm, reader_state, input, false);
         if let Err(err) = exp {
             return err;
         } else {
