@@ -378,6 +378,8 @@ fn compile_macro(
         .chunk
         .encode1(SRET, reserved as u16, *line)
         .unwrap();
+    new_state.chunk.input_regs = reserved;
+    new_state.chunk.extra_regs = new_state.max_regs - reserved;
     let mac = Value::Reference(vm.alloc(Object::Macro(Rc::new(new_state.chunk))));
     let const_i = state.add_constant(mac);
     state
