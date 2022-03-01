@@ -1,5 +1,4 @@
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::rc::Rc;
 
 use slvm::error::*;
@@ -19,52 +18,13 @@ fn compile_params(
     tail: bool,
     line: &mut u32,
 ) -> VMResult<()> {
-    fn move_locals(
-        state: &mut CompileState,
-        var_map: &HashMap<usize, Vec<usize>>,
-        var_skips: &mut Vec<usize>,
-        idx: usize,
-        line: &mut u32,
-    ) -> VMResult<()> {
-        if let Some(t_vec) = var_map.get(&idx) {
-            for target in t_vec {
-                if *target > idx {
-                    move_locals(state, var_map, var_skips, *target, line)?;
-                    var_skips.push(*target);
-                    state
-                        .chunk
-                        .encode2(MOV, *target as u16, idx as u16, *line)?;
-                }
-            }
-        }
-        Ok(())
+    for (i, r) in cdr.iter().enumerate() {
+        compile(vm, state, *r, result + i, line)?;
     }
     if tail {
-        let mut var_map: HashMap<usize, Vec<usize>> = HashMap::new();
-        let mut var_skips = Vec::new();
-        for (i, r) in cdr.iter().enumerate() {
-            if let Value::Symbol(intern) = r {
-                if let Some(idx) = state.get_symbol(*intern) {
-                    if i != idx {
-                        if let Some(v) = var_map.get_mut(&(idx + 1)) {
-                            v.push(i + 1);
-                        } else {
-                            var_map.insert(idx + 1, vec![i + 1]);
-                        }
-                    }
-                }
-            }
-        }
-        for (i, r) in cdr.iter().enumerate() {
-            if !var_skips.contains(&(i + 1)) {
-                move_locals(state, &var_map, &mut var_skips, i + 1, line)?;
-                compile(vm, state, *r, i + 1, line)?;
-            }
-        }
-    } else {
-        for (i, r) in cdr.iter().enumerate() {
-            compile(vm, state, *r, result + i + 1, line)?;
-        }
+        state
+            .chunk
+            .encode3(BMOV, 1, result as u16, cdr.len() as u16, *line)?;
     }
     Ok(())
 }
@@ -81,7 +41,7 @@ fn compile_call(
     let const_i = state.add_constant(callable);
     let tail = state.tail && state.defers == 0;
     state.tail = false;
-    compile_params(vm, state, cdr, result, tail, line)?;
+    compile_params(vm, state, cdr, result + 1, tail, line)?;
     state
         .chunk
         .encode2(CONST, b_reg as u16, const_i as u16, *line)?;
@@ -107,7 +67,7 @@ fn compile_callg(
 ) -> VMResult<()> {
     let tail = state.tail && state.defers == 0;
     state.tail = false;
-    compile_params(vm, state, cdr, result, tail, line)?;
+    compile_params(vm, state, cdr, result + 1, tail, line)?;
     if tail {
         state.chunk.encode_tcallg(global, cdr.len() as u16, *line)?;
     } else {
@@ -128,9 +88,18 @@ fn compile_call_reg(
 ) -> VMResult<()> {
     let tail = state.tail && state.defers == 0;
     state.tail = false;
-    compile_params(vm, state, cdr, result, tail, line)?;
+    let b_reg = if tail {
+        let b_reg = result + cdr.len() + 2;
+        state.chunk.encode2(MOV, b_reg as u16, reg as u16, *line)?;
+        b_reg
+    } else {
+        0
+    };
+    compile_params(vm, state, cdr, result + 1, tail, line)?;
     if tail {
-        state.chunk.encode2(TCALL, reg, cdr.len() as u16, *line)?;
+        state
+            .chunk
+            .encode2(TCALL, b_reg as u16, cdr.len() as u16, *line)?;
     } else {
         state
             .chunk
@@ -149,7 +118,7 @@ fn compile_call_myself(
 ) -> VMResult<()> {
     let tail = force_tail || (state.tail && state.defers == 0);
     state.tail = false;
-    compile_params(vm, state, cdr, result, tail, line)?;
+    compile_params(vm, state, cdr, result + 1, tail, line)?;
     if tail {
         state.chunk.encode1(TCALLM, cdr.len() as u16, *line)?;
     } else {
@@ -645,13 +614,13 @@ fn compile_cons(
                     line
                 )));
             }
-            compile(vm, state, cdr[0], result + 1, line)?;
-            compile(vm, state, cdr[1], result + 2, line)?;
+            compile(vm, state, cdr[0], result, line)?;
+            compile(vm, state, cdr[1], result + 1, line)?;
             state.chunk.encode3(
                 CONS,
                 result as u16,
+                result as u16,
                 (result + 1) as u16,
-                (result + 2) as u16,
                 *line,
             )?;
         }
