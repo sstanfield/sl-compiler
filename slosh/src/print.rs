@@ -133,6 +133,7 @@ pub fn display_value(vm: &Vm, val: Value) -> String {
             }
             Object::String(s) => format!("\"{}\"", s),
             Object::Bytes(_) => "Bytes".to_string(), // XXX TODO
+            Object::Upval(val) => display_value(vm, *val),
         },
     }
 }
