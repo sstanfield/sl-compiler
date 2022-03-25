@@ -9,22 +9,22 @@ use crate::state::*;
 
 macro_rules! is_tag {
     ($vm:expr, $exp:expr, $form:expr) => {{
-        if let Value::Reference(h) = $exp {
-            match $vm.get(h) {
-                Object::Pair(car, _cdr, _) => {
+        match $exp {
+            Value::Pair(handle) => {
+                let (car, _, _) = $vm.get_pair(handle);
+                if car.is_symbol($form) {
+                    return true;
+                }
+            }
+            Value::Vector(handle) => {
+                let v = $vm.get_vector(handle);
+                if let Some(car) = v.get(0) {
                     if car.is_symbol($form) {
                         return true;
                     }
                 }
-                Object::Vector(v) => {
-                    if let Some(car) = v.get(0) {
-                        if car.is_symbol($form) {
-                            return true;
-                        }
-                    }
-                }
-                _ => {}
             }
+            _ => {}
         }
         false
     }};
@@ -32,34 +32,33 @@ macro_rules! is_tag {
 
 macro_rules! get_data {
     ($vm:expr, $exp:expr) => {{
-        if let Value::Reference(h) = $exp {
-            match $vm.get(h) {
-                Object::Pair(_car, Value::Reference(h), meta) => {
-                    if let Object::Pair(ncar, ncdr, _) = $vm.get(*h) {
-                        if ncdr.is_nil() {
-                            return Ok(*ncar);
+        match $exp {
+            Value::Pair(handle) => {
+                let (_, cdr, meta) = $vm.get_pair(handle);
+                if let Value::Pair(cdr_handle) = cdr {
+                    let (ncar, ncdr, _) = $vm.get_pair(cdr_handle);
+                    if ncdr.is_nil() {
+                        return Ok(ncar);
+                    } else {
+                        if let Some(meta) = meta {
+                            return Err(VMError::new_compile(format!(
+                                "Invalid tag at {}:{}, takes one expression.",
+                                meta.line, meta.col
+                            )));
                         } else {
-                            if let Some(meta) = meta {
-                                return Err(VMError::new_compile(format!(
-                                    "Invalid tag at {}:{}, takes one expression.",
-                                    meta.line, meta.col
-                                )));
-                            } else {
-                                return Err(VMError::new_compile(
-                                    "Invalid tag, takes one expression.",
-                                ));
-                            }
+                            return Err(VMError::new_compile("Invalid tag, takes one expression."));
                         }
                     }
                 }
-                Object::Vector(v) => {
-                    if v.len() != 2 {
-                        return Err(VMError::new_compile("Invalid tag, takes one expression."));
-                    }
-                    return Ok(v[1]);
-                }
-                _ => {}
             }
+            Value::Vector(handle) => {
+                let v = $vm.get_vector(handle);
+                if v.len() != 2 {
+                    return Err(VMError::new_compile("Invalid tag, takes one expression."));
+                }
+                return Ok(v[1]);
+            }
+            _ => {}
         }
         Err(VMError::new_compile("Invalid tag, takes one expression."))
     }};
@@ -104,15 +103,15 @@ impl Tag {
 }
 
 fn quote(vm: &mut Vm, exp: Value) -> Value {
-    let cdr = Value::Reference(vm.alloc(Object::Pair(exp, Value::Nil, None)));
+    let cdr = Value::Pair(vm.alloc(Object::Pair(exp, Value::Nil, None)));
     let q_i = vm.intern_static("quote");
-    Value::Reference(vm.alloc(Object::Pair(Value::Symbol(q_i), cdr, None)))
+    Value::Pair(vm.alloc(Object::Pair(Value::Symbol(q_i), cdr, None)))
 }
 
 fn list(vm: &mut Vm, exp: Value) -> Value {
-    let cdr = Value::Reference(vm.alloc(Object::Pair(exp, Value::Nil, None)));
+    let cdr = Value::Pair(vm.alloc(Object::Pair(exp, Value::Nil, None)));
     let q_i = vm.intern_static("list");
-    Value::Reference(vm.alloc(Object::Pair(Value::Symbol(q_i), cdr, None)))
+    Value::Pair(vm.alloc(Object::Pair(Value::Symbol(q_i), cdr, None)))
 }
 
 fn vec(vm: &mut Vm, v: &[Value]) -> Value {
@@ -121,31 +120,31 @@ fn vec(vm: &mut Vm, v: &[Value]) -> Value {
         let mut i = v.len();
         while i > 0 {
             let obj = Object::Pair(v[i - 1], last_pair, None);
-            last_pair = Value::Reference(vm.alloc(obj));
+            last_pair = Value::Pair(vm.alloc(obj));
             i -= 1;
         }
     }
     let q_i = vm.intern_static("vec");
-    Value::Reference(vm.alloc(Object::Pair(Value::Symbol(q_i), last_pair, None)))
+    Value::Pair(vm.alloc(Object::Pair(Value::Symbol(q_i), last_pair, None)))
 }
 
 fn list2(vm: &mut Vm, exp: Value) -> Value {
     let q_i = vm.intern_static("list");
-    Value::Reference(vm.alloc(Object::Pair(Value::Symbol(q_i), exp, None)))
+    Value::Pair(vm.alloc(Object::Pair(Value::Symbol(q_i), exp, None)))
 }
 
 fn append(vm: &mut Vm, exp1: Value, exp2: Value) -> Value {
-    let cdr1 = Value::Reference(vm.alloc(Object::Pair(exp2, Value::Nil, None)));
-    let cdr2 = Value::Reference(vm.alloc(Object::Pair(exp1, cdr1, None)));
+    let cdr1 = Value::Pair(vm.alloc(Object::Pair(exp2, Value::Nil, None)));
+    let cdr2 = Value::Pair(vm.alloc(Object::Pair(exp1, cdr1, None)));
     let q_i = vm.intern_static("list-append");
-    Value::Reference(vm.alloc(Object::Pair(Value::Symbol(q_i), cdr2, None)))
+    Value::Pair(vm.alloc(Object::Pair(Value::Symbol(q_i), cdr2, None)))
 }
 
 fn rewrap(vm: &mut Vm, exp: Value, sym: &'static str) -> Value {
-    let cdr = Value::Reference(vm.alloc(Object::Pair(exp, Value::Nil, None)));
+    let cdr = Value::Pair(vm.alloc(Object::Pair(exp, Value::Nil, None)));
     let q_i = vm.intern_static(sym);
     let obj = Object::Pair(quote(vm, Value::Symbol(q_i)), cdr, None);
-    let cdr = Value::Reference(vm.alloc(obj));
+    let cdr = Value::Pair(vm.alloc(obj));
     list2(vm, cdr)
 }
 
@@ -201,27 +200,24 @@ fn qq_expand(vm: &mut Vm, exp: Value, line: &mut u32, depth: u32) -> VMResult<Va
         Ok(back_quote(vm, inner))
     } else {
         match exp {
-            Value::Reference(h) => match vm.get(h) {
-                Object::Pair(car, cdr, _meta) => {
-                    let car = *car;
-                    let cdr = *cdr;
-                    let l1 = qq_expand_list(vm, car, line, depth)?;
-                    if cdr.is_nil() {
-                        Ok(l1)
-                    } else {
-                        let l2 = qq_expand(vm, cdr, line, depth)?;
-                        Ok(append(vm, l1, l2))
-                    }
+            Value::Pair(handle) => {
+                let (car, cdr, _) = vm.get_pair(handle);
+                let l1 = qq_expand_list(vm, car, line, depth)?;
+                if cdr.is_nil() {
+                    Ok(l1)
+                } else {
+                    let l2 = qq_expand(vm, cdr, line, depth)?;
+                    Ok(append(vm, l1, l2))
                 }
-                Object::Vector(vector) => {
-                    let mut new_vec: Vec<Value> = vector.iter().copied().collect();
-                    for i in &mut new_vec {
-                        *i = qq_expand(vm, *i, line, depth)?;
-                    }
-                    Ok(vec(vm, &new_vec[..]))
+            }
+            Value::Vector(handle) => {
+                let vector = vm.get_vector(handle);
+                let mut new_vec: Vec<Value> = vector.to_vec();
+                for i in &mut new_vec {
+                    *i = qq_expand(vm, *i, line, depth)?;
                 }
-                _ => Ok(quote(vm, exp)),
-            },
+                Ok(vec(vm, &new_vec[..]))
+            }
             _ => Ok(quote(vm, exp)),
         }
     }
@@ -260,32 +256,26 @@ fn qq_expand_list(vm: &mut Vm, exp: Value, line: &mut u32, depth: u32) -> VMResu
         Ok(list(vm, inner))
     } else {
         match exp {
-            Value::Reference(h) => match vm.get(h) {
-                Object::Pair(car, cdr, _meta) => {
-                    let car = *car;
-                    let cdr = *cdr;
-                    let l1 = qq_expand_list(vm, car, line, depth)?;
-                    if cdr.is_nil() {
-                        Ok(list(vm, l1))
-                    } else {
-                        let l2 = qq_expand(vm, cdr, line, depth)?;
-                        let app = append(vm, l1, l2);
-                        Ok(list(vm, app))
-                    }
+            Value::Pair(handle) => {
+                let (car, cdr, _) = vm.get_pair(handle);
+                let l1 = qq_expand_list(vm, car, line, depth)?;
+                if cdr.is_nil() {
+                    Ok(list(vm, l1))
+                } else {
+                    let l2 = qq_expand(vm, cdr, line, depth)?;
+                    let app = append(vm, l1, l2);
+                    Ok(list(vm, app))
                 }
-                Object::Vector(vector) => {
-                    let mut new_vec: Vec<Value> = vector.iter().copied().collect();
-                    for i in &mut new_vec {
-                        *i = qq_expand(vm, *i, line, depth)?;
-                    }
-                    let vv = vec(vm, &new_vec[..]);
-                    Ok(list(vm, vv))
+            }
+            Value::Vector(handle) => {
+                let vector = vm.get_vector(handle);
+                let mut new_vec: Vec<Value> = vector.to_vec();
+                for i in &mut new_vec {
+                    *i = qq_expand(vm, *i, line, depth)?;
                 }
-                _ => {
-                    let q = quote(vm, exp);
-                    Ok(list(vm, q))
-                }
-            },
+                let vv = vec(vm, &new_vec[..]);
+                Ok(list(vm, vv))
+            }
             _ => {
                 let q = quote(vm, exp);
                 Ok(list(vm, q))
@@ -302,7 +292,6 @@ pub fn backquote(
     line: &mut u32,
 ) -> VMResult<()> {
     let exp = qq_expand(vm, exp, line, 0)?;
-    //println!("XXXX {}", exp.display_value(vm));
     pass1(vm, state, exp)?;
     compile(vm, state, exp, result, line)?;
     Ok(())

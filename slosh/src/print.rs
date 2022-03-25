@@ -1,4 +1,3 @@
-use slvm::heap::*;
 use slvm::value::*;
 use slvm::vm::*;
 use slvm::Interned;
@@ -62,17 +61,11 @@ fn list_out(vm: &Vm, res: &mut String, lst: Value) {
             first = false;
         }
         match cdr {
-            Value::Reference(h) => match vm.get(h) {
-                Object::Pair(car, ncdr, _) => {
-                    res.push_str(&display_value(vm, *car));
-                    cdr = *ncdr;
-                }
-                _ => {
-                    res.push_str(". ");
-                    res.push_str(&display_value(vm, cdr));
-                    break;
-                }
-            },
+            Value::Pair(h) => {
+                let (car, ncdr, _) = vm.get_pair(h);
+                res.push_str(&display_value(vm, car));
+                cdr = ncdr;
+            }
             _ => {
                 res.push_str(". ");
                 res.push_str(&display_value(vm, cdr));
@@ -91,50 +84,49 @@ pub fn display_value(vm: &Vm, val: Value) -> String {
         Value::UInt(i) => format!("{}", i),
         Value::Byte(b) => format!("{}", b),
         Value::Symbol(i) => vm.get_interned(*i).to_string(),
-        Value::Keyword(i) => format!(":{}", vm.get_interned(*i).to_string()),
-        Value::StringConst(i) => format!("\"{}\"", vm.get_interned(*i).to_string()),
+        Value::Keyword(i) => format!(":{}", vm.get_interned(*i)),
+        Value::StringConst(i) => format!("\"{}\"", vm.get_interned(*i)),
         Value::CodePoint(ch) => format!("#\\{}", ch),
         Value::CharCluster(l, c) => {
             format!("#\\{}", String::from_utf8_lossy(&c[0..*l as usize]))
         }
         Value::CharClusterLong(_) => "Char".to_string(), // XXX TODO- move this to Object?
         Value::Builtin(_) => "#<Function>".to_string(),
-        Value::Binding(_) => display_value(vm, val.unref(vm)),
         Value::Global(_) => display_value(vm, val.unref(vm)),
         Value::Nil => "nil".to_string(),
         Value::Undefined => "#<Undefined>".to_string(), //panic!("Tried to get type for undefined!"),
-        Value::Reference(h) => match vm.get(*h) {
-            Object::Lambda(_) => "#<Lambda>".to_string(),
-            Object::Macro(_) => "#<Macro>".to_string(),
-            Object::Closure(_, _) => "#<Lambda>".to_string(),
-            Object::Continuation(_) => "#<Continuation>".to_string(),
-            Object::CallFrame(_) => "#<CallFrame>".to_string(),
-            Object::Vector(v) => {
-                let mut res = String::new();
-                res.push_str("#(");
-                list_out_iter(vm, &mut res, &mut v.iter().copied());
-                res.push(')');
-                res
-            }
-            Object::Pair(car, cdr, _) => {
-                let mut res = String::new();
-                if quotey(vm, *car, &mut res) {
-                    if let Some((cadr, Value::Nil)) = cdr.get_pair(vm) {
-                        res.push_str(&display_value(vm, cadr));
-                    } else {
-                        res.push_str(&display_value(vm, *cdr));
-                    }
+        Value::Lambda(_) => "#<Lambda>".to_string(),
+        Value::Macro(_) => "#<Macro>".to_string(),
+        Value::Closure(_) => "#<Lambda>".to_string(),
+        Value::Continuation(_) => "#<Continuation>".to_string(),
+        Value::CallFrame(_) => "#<CallFrame>".to_string(),
+        Value::Vector(h) => {
+            let v = vm.get_vector(*h);
+            let mut res = String::new();
+            res.push_str("#(");
+            list_out_iter(vm, &mut res, &mut v.iter().copied());
+            res.push(')');
+            res
+        }
+        Value::Pair(h) => {
+            let (car, cdr, _) = vm.get_pair(*h);
+            let mut res = String::new();
+            if quotey(vm, car, &mut res) {
+                if let Some((cadr, Value::Nil)) = cdr.get_pair(vm) {
+                    res.push_str(&display_value(vm, cadr));
                 } else {
-                    res.push('(');
-                    list_out(vm, &mut res, val);
-                    res.push(')');
+                    res.push_str(&display_value(vm, cdr));
                 }
-                res
+            } else {
+                res.push('(');
+                list_out(vm, &mut res, val);
+                res.push(')');
             }
-            Object::String(s) => format!("\"{}\"", s),
-            Object::Bytes(_) => "Bytes".to_string(), // XXX TODO
-            Object::Upval(val) => display_value(vm, *val),
-        },
+            res
+        }
+        Value::String(h) => format!("\"{}\"", vm.get_string(*h)),
+        Value::Bytes(_) => "Bytes".to_string(), // XXX TODO
+        Value::Value(h) => display_value(vm, vm.get_value(*h)),
     }
 }
 
@@ -146,10 +138,9 @@ pub fn pretty_value(vm: &Vm, val: Value) -> String {
             format!("{}", String::from_utf8_lossy(&c[0..*l as usize]))
         }
         Value::CharClusterLong(_) => "Char".to_string(),
-        Value::Reference(h) => match vm.get(*h) {
-            Object::String(s) => format!("{}", s),
-            _ => display_value(vm, val),
-        },
+        Value::String(h) => {
+            format!("{}", vm.get_string(*h))
+        }
         _ => display_value(vm, val),
     }
 }

@@ -4,7 +4,6 @@ use std::io::ErrorKind;
 use std::rc::Rc;
 
 use slvm::error::*;
-use slvm::heap::*;
 use slvm::opcodes::*;
 use slvm::value::*;
 use slvm::vm::*;
@@ -51,17 +50,16 @@ fn dasm(vm: &mut Vm, registers: &[Value]) -> VMResult<Value> {
         ));
     }
     match registers[0].unref(vm) {
-        Value::Reference(h) => match vm.get(h) {
-            Object::Lambda(l) => {
-                l.disassemble_chunk(vm, 0)?;
-                Ok(Value::Nil)
-            }
-            Object::Closure(l, _caps) => {
-                l.disassemble_chunk(vm, 0)?;
-                Ok(Value::Nil)
-            }
-            _ => Err(VMError::new_vm("DASM: Not a callable.")),
-        },
+        Value::Lambda(handle) => {
+            let l = vm.get_lambda(handle);
+            l.disassemble_chunk(vm, 0)?;
+            Ok(Value::Nil)
+        }
+        Value::Closure(handle) => {
+            let (l, _) = vm.get_closure(handle);
+            l.disassemble_chunk(vm, 0)?;
+            Ok(Value::Nil)
+        }
         _ => Err(VMError::new_vm("DASM: Not a callable.")),
     }
 }
@@ -72,24 +70,16 @@ fn load(vm: &mut Vm, registers: &[Value]) -> VMResult<Value> {
             "load: wrong number of args, expected one",
         ));
     }
-    let name;
-    match registers[0].unref(vm) {
-        Value::StringConst(i) => {
-            name = vm.get_interned(i);
-        }
-        Value::Reference(h) => {
-            let obj = vm.get(h);
-            match obj {
-                Object::String(s) => {
-                    let s = s.to_string();
-                    let s_i = vm.intern(&s);
-                    name = vm.get_interned(s_i);
-                }
-                _ => return Err(VMError::new_vm("load: Not a string.")),
-            }
+    let name = match registers[0].unref(vm) {
+        Value::StringConst(i) => vm.get_interned(i),
+        Value::String(h) => {
+            let s = vm.get_string(h);
+            let s = s.to_string();
+            let s_i = vm.intern(&s);
+            vm.get_interned(s_i)
         }
         _ => return Err(VMError::new_vm("load: Not a string.")),
-    }
+    };
     let txt = std::fs::read_to_string(name).map_err(|e| VMError::new_vm(format!("load: {}", e)))?;
     let mut reader_state = ReaderState::new();
     let exps = read_all(vm, &mut reader_state, &txt)
@@ -97,8 +87,9 @@ fn load(vm: &mut Vm, registers: &[Value]) -> VMResult<Value> {
     let mut line = 1;
     let mut last = Value::Nil;
     for exp in exps {
-        if let Value::Reference(h) = exp {
-            if let Object::Pair(_, _, Some(meta)) = vm.get(h) {
+        if let Value::Pair(h) = exp {
+            let (_, _, meta) = vm.get_pair(h);
+            if let Some(meta) = meta {
                 line = meta.line as u32;
             }
         }
@@ -181,8 +172,9 @@ fn main() {
             Ok(exps) => {
                 let mut line = 1;
                 for exp in exps {
-                    if let Value::Reference(h) = exp {
-                        if let Object::Pair(_, _, Some(meta)) = vm.get(h) {
+                    if let Value::Pair(h) = exp {
+                        let (_, _, meta) = vm.get_pair(h);
+                        if let Some(meta) = meta {
                             line = meta.line as u32;
                         }
                     }

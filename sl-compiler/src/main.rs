@@ -1,7 +1,6 @@
 use std::rc::Rc;
 
 use slvm::error::*;
-use slvm::heap::*;
 use slvm::opcodes::*;
 use slvm::value::*;
 use slvm::vm::*;
@@ -63,8 +62,9 @@ fn main() {
     let mut line = 1;
     let file_i = vm.intern(&config.script);
     for exp in exps {
-        if let Value::Reference(h) = exp {
-            if let Object::Pair(_, _, Some(meta)) = vm.get(h) {
+        if let Value::Pair(h) = exp {
+            let (_, _, meta) = vm.get_pair(h);
+            if let Some(meta) = meta {
                 line = meta.line as u32;
             }
         }

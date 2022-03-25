@@ -132,22 +132,21 @@ fn compile_call_myself(
 fn get_args_iter<'vm>(
     vm: &'vm Vm,
     args: Value,
-    obj: &Object,
+    name: &str,
     line: &mut u32,
 ) -> VMResult<Box<dyn Iterator<Item = Value> + 'vm>> {
-    match obj {
-        Object::Pair(_car, _cdr, meta) => {
+    match args {
+        Value::Pair(handle) => {
+            let (_, _, meta) = vm.get_pair(handle);
             if let Some(meta) = meta {
                 *line = meta.line as u32;
             }
             Ok(args.iter(vm))
         }
-        Object::Vector(_v) => Ok(args.iter(vm)),
+        Value::Vector(_v) => Ok(args.iter(vm)),
+        Value::Nil => Ok(args.iter(vm)),
         _ => {
-            return Err(VMError::new_compile(format!(
-                "Malformed fn, invalid args, {:?}.",
-                obj
-            )));
+            return Err(VMError::new_compile(format!("{}, invalid args", name)));
         }
     }
 }
@@ -158,80 +157,61 @@ fn mk_state(
     args: Value,
     line: &mut u32,
 ) -> VMResult<(CompileState, Option<Vec<Value>>)> {
-    match args {
-        Value::Reference(h) => {
-            let mut new_state = CompileState::new_state(
-                vm,
-                state.chunk.file_name,
-                *line,
-                Some(state.symbols.clone()),
-            );
-            let obj = vm.get(h);
-            let args_iter = get_args_iter(vm, args, obj, line)?;
-            let mut opt = false;
-            let mut rest = false;
-            let mut opt_comps = Vec::new();
-            new_state.chunk.dbg_args = Some(Vec::new());
-            for a in args_iter {
-                match a {
-                    Value::Symbol(i) => {
-                        if i == new_state.specials.rest {
-                            rest = true;
-                        } else {
-                            new_state.symbols.borrow_mut().data.borrow_mut().add_sym(i);
-                            if let Some(dbg_args) = state.chunk.dbg_args.as_mut() {
-                                dbg_args.push(i);
-                            }
-                            if opt {
-                                new_state.chunk.opt_args += 1;
-                            } else {
-                                new_state.chunk.args += 1;
-                            }
-                        }
+    let mut new_state = CompileState::new_state(
+        vm,
+        state.chunk.file_name,
+        *line,
+        Some(state.symbols.clone()),
+    );
+    let args_iter = get_args_iter(vm, args, "fn", line)?;
+    let mut opt = false;
+    let mut rest = false;
+    let mut opt_comps = Vec::new();
+    new_state.chunk.dbg_args = Some(Vec::new());
+    for a in args_iter {
+        match a {
+            Value::Symbol(i) => {
+                if i == new_state.specials.rest {
+                    rest = true;
+                } else {
+                    new_state.symbols.borrow_mut().data.borrow_mut().add_sym(i);
+                    if let Some(dbg_args) = state.chunk.dbg_args.as_mut() {
+                        dbg_args.push(i);
                     }
-                    Value::Reference(h) => {
-                        let obj = vm.get(h);
-                        let mut args_iter = get_args_iter(vm, a, obj, line)?;
-                        opt = true;
-                        if let Some(Value::Symbol(i)) = args_iter.next() {
-                            new_state.symbols.borrow_mut().data.borrow_mut().add_sym(i);
-                            if let Some(dbg_args) = state.chunk.dbg_args.as_mut() {
-                                dbg_args.push(i);
-                            }
-                            new_state.chunk.opt_args += 1;
-                            if let Some(r) = args_iter.next() {
-                                opt_comps.push(r);
-                            }
-                            // XXX Check to make sure only two elements...
-                        }
-                    }
-                    _ => {
-                        return Err(VMError::new_compile(
-                            "Malformed fn, invalid args, must be symbols.",
-                        ))
+                    if opt {
+                        new_state.chunk.opt_args += 1;
+                    } else {
+                        new_state.chunk.args += 1;
                     }
                 }
             }
-            new_state.chunk.rest = rest;
-            if !opt_comps.is_empty() {
-                Ok((new_state, Some(opt_comps)))
-            } else {
-                Ok((new_state, None))
+            Value::Pair(_) | Value::Vector(_) => {
+                let mut args_iter = get_args_iter(vm, a, "fn", line)?;
+                opt = true;
+                if let Some(Value::Symbol(i)) = args_iter.next() {
+                    new_state.symbols.borrow_mut().data.borrow_mut().add_sym(i);
+                    if let Some(dbg_args) = state.chunk.dbg_args.as_mut() {
+                        dbg_args.push(i);
+                    }
+                    new_state.chunk.opt_args += 1;
+                    if let Some(r) = args_iter.next() {
+                        opt_comps.push(r);
+                    }
+                    // XXX Check to make sure only two elements...
+                }
+            }
+            _ => {
+                return Err(VMError::new_compile(
+                    "Malformed fn, invalid args, must be symbols.",
+                ))
             }
         }
-        Value::Nil => Ok((
-            CompileState::new_state(
-                vm,
-                state.chunk.file_name,
-                *line,
-                Some(state.symbols.clone()),
-            ),
-            None,
-        )),
-        _ => Err(VMError::new_compile(format!(
-            "Malformed fn, invalid args, {:?}.",
-            args
-        ))),
+    }
+    new_state.chunk.rest = rest;
+    if !opt_comps.is_empty() {
+        Ok((new_state, Some(opt_comps)))
+    } else {
+        Ok((new_state, None))
     }
 }
 
@@ -292,7 +272,7 @@ fn compile_fn(
     }
     new_state.chunk.input_regs = reserved;
     new_state.chunk.extra_regs = new_state.max_regs - reserved;
-    let lambda = Value::Reference(vm.alloc(Object::Lambda(Rc::new(new_state.chunk))));
+    let lambda = Value::Lambda(vm.alloc(Object::Lambda(Rc::new(new_state.chunk))));
     let const_i = state.add_constant(lambda);
     state
         .chunk
@@ -349,7 +329,7 @@ fn compile_macro(
         .unwrap();
     new_state.chunk.input_regs = reserved;
     new_state.chunk.extra_regs = new_state.max_regs - reserved;
-    let mac = Value::Reference(vm.alloc(Object::Macro(Rc::new(new_state.chunk))));
+    let mac = Value::Macro(vm.alloc(Object::Macro(Rc::new(new_state.chunk))));
     let const_i = state.add_constant(mac);
     state
         .chunk
@@ -1064,41 +1044,23 @@ fn compile_let(
         let args = cdr_iter.next().unwrap(); // unwrap safe, length is at least 1
         let mut opt_comps: Vec<(usize, Value)> = Vec::new();
         let mut used_regs = 0;
-        match args {
-            Value::Reference(h) => {
-                let obj = vm.get(*h);
-                let args_iter = get_args_iter(vm, *args, obj, line)?;
-                // XXX fixme
-                //new_state.chunk.dbg_args = Some(Vec::new());
-                for a in args_iter {
-                    used_regs += 1;
-                    match a {
-                        Value::Reference(h) => {
-                            let obj = vm.get(h);
-                            let mut args_iter = get_args_iter(vm, a, obj, line)?;
-                            if let Some(Value::Symbol(i)) = args_iter.next() {
-                                let reg = symbols.borrow_mut().insert(i) + 1;
-                                if let Some(dbg_args) = state.chunk.dbg_args.as_mut() {
-                                    dbg_args.push(i);
-                                }
-                                if let Some(r) = args_iter.next() {
-                                    opt_comps.push((reg, r));
-                                } else {
-                                    opt_comps.push((reg, Value::Nil));
-                                }
-                                // XXX Check to make sure only two elements...
-                            }
-                        }
-                        _ => return Err(VMError::new_compile("let: invalid args.")),
-                    }
+        let args_iter = get_args_iter(vm, *args, "let", line)?;
+        // XXX fixme
+        //new_state.chunk.dbg_args = Some(Vec::new());
+        for a in args_iter {
+            used_regs += 1;
+            let mut args_iter = get_args_iter(vm, a, "let", line)?;
+            if let Some(Value::Symbol(i)) = args_iter.next() {
+                let reg = symbols.borrow_mut().insert(i) + 1;
+                if let Some(dbg_args) = state.chunk.dbg_args.as_mut() {
+                    dbg_args.push(i);
                 }
-            }
-            Value::Nil => {}
-            _ => {
-                return Err(VMError::new_compile(format!(
-                    "let: Invalid bindings, {:?}.",
-                    args
-                )))
+                if let Some(r) = args_iter.next() {
+                    opt_comps.push((reg, r));
+                } else {
+                    opt_comps.push((reg, Value::Nil));
+                }
+                // XXX Check to make sure only two elements...
             }
         }
         for (reg, val) in opt_comps {
@@ -1358,13 +1320,8 @@ fn compile_list(
                     if let Value::Undefined = global {
                         eprintln!("Warning: {} not defined.", vm.get_interned(i));
                     }
-                    let mut mac = None;
-                    if let Value::Reference(h) = global {
-                        if let Object::Macro(chunk) = vm.get(h) {
-                            mac = Some(chunk.clone());
-                        }
-                    }
-                    if let Some(mac) = mac {
+                    if let Value::Macro(h) = global {
+                        let mac = vm.get_macro(h);
                         let exp = vm.do_call(mac, cdr)?;
                         //println!("XXX expanded  {}", exp.display_value(vm));
                         pass1(vm, state, exp)?;
@@ -1377,33 +1334,29 @@ fn compile_list(
             Value::Builtin(builtin) => {
                 compile_call(vm, state, Value::Builtin(builtin), cdr, result, line)?
             }
-            Value::Reference(h) => match vm.get(h) {
-                Object::Lambda(_) => {
-                    compile_call(vm, state, Value::Reference(h), cdr, result, line)?
+            Value::Lambda(h) => compile_call(vm, state, Value::Lambda(h), cdr, result, line)?,
+            Value::Pair(h) => {
+                let (ncar, ncdr, meta) = vm.get_pair(h);
+                if let Some(meta) = meta {
+                    *line = meta.line as u32;
                 }
-                Object::Pair(ncar, ncdr, meta) => {
-                    if let Some(meta) = meta {
-                        *line = meta.line as u32;
-                    }
-                    let ncdr: Vec<Value> = ncdr.iter(vm).collect();
+                let ncdr: Vec<Value> = ncdr.iter(vm).collect();
+                compile_list(vm, state, ncar, &ncdr[..], result, line)?;
+                compile_call_reg(vm, state, result as u16, cdr, result, line)?
+            }
+            Value::Vector(h) => {
+                let v = vm.get_vector(h);
+                if let Some(ncar) = v.get(0) {
                     let ncar = *ncar;
-                    compile_list(vm, state, ncar, &ncdr[..], result, line)?;
+                    if v.len() > 1 {
+                        let ncdr = make_vec_cdr(&v[1..]);
+                        compile_list(vm, state, ncar, ncdr, result, line)?;
+                    } else {
+                        compile_list(vm, state, ncar, &[], result, line)?;
+                    }
                     compile_call_reg(vm, state, result as u16, cdr, result, line)?
                 }
-                Object::Vector(v) => {
-                    if let Some(ncar) = v.get(0) {
-                        let ncar = *ncar;
-                        if v.len() > 1 {
-                            let ncdr = make_vec_cdr(&v[1..]);
-                            compile_list(vm, state, ncar, ncdr, result, line)?;
-                        } else {
-                            compile_list(vm, state, ncar, &[], result, line)?;
-                        }
-                        compile_call_reg(vm, state, result as u16, cdr, result, line)?
-                    }
-                }
-                _ => {}
-            },
+            }
             _ => {
                 println!("Boo, {}", car.display_value(vm));
             }
@@ -1416,26 +1369,27 @@ pub fn pass1(vm: &mut Vm, state: &mut CompileState, exp: Value) -> VMResult<()> 
     let fn_ = vm.intern("fn");
     let mac_ = vm.intern("macro");
     match exp {
-        Value::Reference(h) => match vm.get(h).clone() {
-            Object::Pair(car, _cdr, _) => {
-                // short circuit on an fn form, will be handled with it's own state.
-                if let Value::Symbol(i) = car {
-                    if i == fn_ || i == mac_ {
-                        return Ok(());
-                    }
-                }
-                // XXX boo on this collect.
-                for r in exp.iter(vm).collect::<Vec<Value>>() {
-                    pass1(vm, state, r)?;
+        Value::Pair(handle) => {
+            let (car, _, _) = vm.get_pair(handle);
+            // short circuit on an fn form, will be handled with it's own state.
+            if let Value::Symbol(i) = car {
+                if i == fn_ || i == mac_ {
+                    return Ok(());
                 }
             }
-            Object::Vector(v) => {
-                for r in v {
-                    pass1(vm, state, r)?;
-                }
+            // XXX boo on this collect.
+            for r in exp.iter(vm).collect::<Vec<Value>>() {
+                pass1(vm, state, r)?;
             }
-            _ => {}
-        },
+        }
+        Value::Vector(handle) => {
+            // This is ugly, break the lifetime of v from vm safely.
+            // Maybe just use unsafe or not compile vectors...
+            let v: Vec<Value> = vm.get_vector(handle).to_vec();
+            for r in v {
+                pass1(vm, state, r)?;
+            }
+        }
         Value::Symbol(i) => {
             if state.get_symbol(i).is_none() && state.symbols.borrow().can_capture(i) {
                 state.symbols.borrow_mut().insert_capture(vm, i);
@@ -1451,6 +1405,16 @@ pub fn pass1(vm: &mut Vm, state: &mut CompileState, exp: Value) -> VMResult<()> 
         Value::Byte(_) => {}
         Value::Int(i) if i >= 0 && i <= u16::MAX as i64 => {}
         Value::UInt(i) if i <= u16::MAX as u64 => {}
+
+        Value::String(_) => {}
+        Value::Bytes(_) => {}
+        Value::Lambda(_) => {}
+        Value::Macro(_) => {}
+        Value::Closure(_) => {}
+        Value::Continuation(_) => {}
+        Value::CallFrame(_) => {}
+        Value::Value(_) => {}
+
         _ => {
             state.add_constant(exp);
         }
@@ -1506,28 +1470,26 @@ pub fn compile(
         state.max_regs = result;
     }
     match exp {
-        Value::Reference(h) => match vm.get(h) {
-            Object::Pair(car, cdr, meta) => {
-                if let Some(meta) = meta {
-                    *line = meta.line as u32;
-                }
-                let cdr: Vec<Value> = cdr.iter(vm).collect();
+        Value::Pair(handle) => {
+            let (car, cdr, meta) = vm.get_pair(handle);
+            if let Some(meta) = meta {
+                *line = meta.line as u32;
+            }
+            let cdr: Vec<Value> = cdr.iter(vm).collect();
+            compile_list(vm, state, car, &cdr[..], result, line)?;
+        }
+        Value::Vector(handle) => {
+            let v = vm.get_vector(handle);
+            if let Some(car) = v.get(0) {
                 let car = *car;
-                compile_list(vm, state, car, &cdr[..], result, line)?;
-            }
-            Object::Vector(v) => {
-                if let Some(car) = v.get(0) {
-                    let car = *car;
-                    if v.len() > 1 {
-                        let cdr = make_vec_cdr(&v[1..]);
-                        compile_list(vm, state, car, cdr, result, line)?;
-                    } else {
-                        compile_list(vm, state, car, &[], result, line)?;
-                    }
+                if v.len() > 1 {
+                    let cdr = make_vec_cdr(&v[1..]);
+                    compile_list(vm, state, car, cdr, result, line)?;
+                } else {
+                    compile_list(vm, state, car, &[], result, line)?;
                 }
             }
-            _ => {}
-        },
+        }
         Value::Symbol(i) => {
             if let Some(idx) = state.get_symbol(i) {
                 if result != idx + 1 {
@@ -1552,6 +1514,7 @@ pub fn compile(
             state.chunk.encode2(REGU, result as u16, i as u16, *line)?
         }
         _ => {
+            // XXX this used to ignore References but now does not, is that good?
             let const_i = state.add_constant(exp);
             state
                 .chunk

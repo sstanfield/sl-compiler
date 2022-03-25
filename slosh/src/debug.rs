@@ -28,7 +28,7 @@ fn dump_regs(vm: &Vm, frame: &CallFrame) {
         } else {
             "[SCRATCH]"
         };
-        if let Value::Binding(_) = r {
+        if let Value::Value(_) = r {
             println!(
                 "{:#03} ^{:#20}: {:#12} {}",
                 i,
