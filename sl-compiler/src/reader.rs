@@ -4,7 +4,7 @@ use std::error::Error;
 use std::fmt;
 use std::num::{ParseFloatError, ParseIntError};
 
-use slvm::heap::{Meta, Object};
+use slvm::heap::Meta;
 use slvm::value::*;
 use slvm::vm::*;
 use slvm::Chunk;
@@ -217,7 +217,7 @@ fn do_char(
             }
             Ok(Value::CharCluster(ch.len() as u8, v))
         } else {
-            Ok(Value::CharClusterLong(vm.alloc(Object::String(ch))))
+            Ok(Value::CharClusterLong(vm.alloc_string(ch)))
         }
         /*Ok(make_exp(
             ExpEnum::Char(environment.interner.intern(&*ch).into()),
@@ -726,9 +726,10 @@ fn read_vector(
 fn get_unquote_lst(vm: &mut Vm, exp: Value) -> Option<Value> {
     if let Value::Pair(h) = exp {
         let uq = vm.intern("unquote");
-        if let Object::Pair(Value::Symbol(si), cdr, _) = vm.get(h) {
-            if *si == uq {
-                return Some(*cdr);
+        let (car, cdr, _) = vm.get_pair(h);
+        if let Value::Symbol(si) = car {
+            if si == uq {
+                return Some(cdr);
             }
         }
     }
@@ -814,7 +815,7 @@ fn read_list(
                         ichars,
                     ));
                 }
-                head = Value::Pair(vm.alloc(Object::Pair(exp, Value::Nil, Some(meta))));
+                head = Value::Pair(vm.alloc_pair(exp, Value::Nil, Some(meta)));
                 tail = head;
             } else if dot {
                 if is_unquote_splice(vm, exp) {
@@ -842,21 +843,19 @@ fn read_list(
                             ichars,
                         ));
                     }
-                    Value::Vector(vm.alloc(Object::Vector(v)))
+                    Value::Vector(vm.alloc_vector(v))
                 } else {
                     exp
                 };
                 if let Value::Pair(h) = tail {
-                    if let Object::Pair(_, cdr, _) = vm.get_mut(h) {
-                        *cdr = exp;
-                    }
+                    let (_, cdr, _) = vm.get_pair_mut(h);
+                    *cdr = exp;
                 }
             } else {
-                let new_tail = Value::Pair(vm.alloc(Object::Pair(exp, Value::Nil, Some(meta))));
+                let new_tail = Value::Pair(vm.alloc_pair(exp, Value::Nil, Some(meta)));
                 if let Value::Pair(h) = tail {
-                    if let Object::Pair(_, cdr, _) = vm.get_mut(h) {
-                        *cdr = new_tail;
-                    }
+                    let (_, cdr, _) = vm.get_pair_mut(h);
+                    *cdr = new_tail;
                 }
                 tail = new_tail;
             }
@@ -972,12 +971,12 @@ fn read_inner(
             }
             "'" => match read_inner(vm, reader_state, chars, buffer, in_back_quote, false) {
                 Ok((Some(exp), ichars)) => {
-                    let cdr = vm.alloc(Object::Pair(exp, Value::Nil, Some(meta)));
-                    let qlist = Value::Pair(vm.alloc(Object::Pair(
+                    let cdr = vm.alloc_pair(exp, Value::Nil, Some(meta));
+                    let qlist = Value::Pair(vm.alloc_pair(
                         Value::Symbol(i_quote),
                         Value::Pair(cdr),
                         Some(meta),
-                    )));
+                    ));
                     return Ok((Some(qlist), ichars));
                 }
                 Ok((None, ichars)) => {
@@ -994,12 +993,12 @@ fn read_inner(
             },
             "`" => match read_inner(vm, reader_state, chars, buffer, true, false) {
                 Ok((Some(exp), ichars)) => {
-                    let cdr = vm.alloc(Object::Pair(exp, Value::Nil, Some(meta)));
-                    let qlist = Value::Pair(vm.alloc(Object::Pair(
+                    let cdr = vm.alloc_pair(exp, Value::Nil, Some(meta));
+                    let qlist = Value::Pair(vm.alloc_pair(
                         Value::Symbol(i_backquote),
                         Value::Pair(cdr),
                         Some(meta),
-                    )));
+                    ));
                     return Ok((Some(qlist), ichars));
                 }
                 Ok((None, ichars)) => {
@@ -1026,13 +1025,13 @@ fn read_inner(
                 };
                 match read_inner(vm, reader_state, chars, buffer, in_back_quote, false) {
                     Ok((Some(exp), ichars)) => {
-                        let cdr = vm.alloc(Object::Pair(exp, Value::Nil, Some(meta)));
+                        let cdr = vm.alloc_pair(exp, Value::Nil, Some(meta));
                         return Ok((
-                            Some(Value::Pair(vm.alloc(Object::Pair(
+                            Some(Value::Pair(vm.alloc_pair(
                                 sym,
                                 Value::Pair(cdr),
                                 Some(meta),
-                            )))),
+                            ))),
                             ichars,
                         ));
                     }
@@ -1086,7 +1085,7 @@ fn read_inner(
                     "(" => {
                         let (exp, chars) =
                             read_vector(vm, reader_state, chars, buffer, in_back_quote)?;
-                        return Ok((Some(Value::Vector(vm.alloc(Object::Vector(exp)))), chars));
+                        return Ok((Some(Value::Vector(vm.alloc_vector(exp))), chars));
                     }
                     "t" => {
                         return Ok((Some(Value::True), chars));
@@ -1288,19 +1287,19 @@ pub fn read(
                 Value::Pair(_) => Ok(exps[0]),
                 Value::Vector(_) => Ok(exps[0]),
                 Value::Nil => Ok(exps[0]),
-                _ => Ok(Value::Vector(vm.alloc(Object::Vector(exps)))),
+                _ => Ok(Value::Vector(vm.alloc_vector(exps))),
             }
         } else if exps.is_empty() {
             Err(ReadError {
                 reason: "Empty value".to_string(),
             })
         } else {
-            Ok(Value::Vector(vm.alloc(Object::Vector(exps))))
+            Ok(Value::Vector(vm.alloc_vector(exps)))
         }
     } else if exps.len() == 1 {
         Ok(exps[0])
     } else {
-        Ok(Value::Vector(vm.alloc(Object::Vector(exps))))
+        Ok(Value::Vector(vm.alloc_vector(exps)))
     }
 }
 
@@ -1395,7 +1394,7 @@ mod tests {
             chars = ichars;
             token_exps.push(exp);
         }
-        let val = Value::Vector(vm.alloc(Object::Vector(token_exps)));
+        let val = Value::Vector(vm.alloc_vector(token_exps));
         to_strs(vm, &mut tokens, val);
         tokens
     }

@@ -1,5 +1,4 @@
 use slvm::error::*;
-use slvm::heap::Object;
 use slvm::interner::Interned;
 use slvm::value::*;
 use slvm::vm::*;
@@ -103,15 +102,15 @@ impl Tag {
 }
 
 fn quote(vm: &mut Vm, exp: Value) -> Value {
-    let cdr = Value::Pair(vm.alloc(Object::Pair(exp, Value::Nil, None)));
+    let cdr = Value::Pair(vm.alloc_pair(exp, Value::Nil, None));
     let q_i = vm.intern_static("quote");
-    Value::Pair(vm.alloc(Object::Pair(Value::Symbol(q_i), cdr, None)))
+    Value::Pair(vm.alloc_pair(Value::Symbol(q_i), cdr, None))
 }
 
 fn list(vm: &mut Vm, exp: Value) -> Value {
-    let cdr = Value::Pair(vm.alloc(Object::Pair(exp, Value::Nil, None)));
+    let cdr = Value::Pair(vm.alloc_pair(exp, Value::Nil, None));
     let q_i = vm.intern_static("list");
-    Value::Pair(vm.alloc(Object::Pair(Value::Symbol(q_i), cdr, None)))
+    Value::Pair(vm.alloc_pair(Value::Symbol(q_i), cdr, None))
 }
 
 fn vec(vm: &mut Vm, v: &[Value]) -> Value {
@@ -119,32 +118,31 @@ fn vec(vm: &mut Vm, v: &[Value]) -> Value {
     if !v.is_empty() {
         let mut i = v.len();
         while i > 0 {
-            let obj = Object::Pair(v[i - 1], last_pair, None);
-            last_pair = Value::Pair(vm.alloc(obj));
+            last_pair = Value::Pair(vm.alloc_pair(v[i - 1], last_pair, None));
             i -= 1;
         }
     }
     let q_i = vm.intern_static("vec");
-    Value::Pair(vm.alloc(Object::Pair(Value::Symbol(q_i), last_pair, None)))
+    Value::Pair(vm.alloc_pair(Value::Symbol(q_i), last_pair, None))
 }
 
 fn list2(vm: &mut Vm, exp: Value) -> Value {
     let q_i = vm.intern_static("list");
-    Value::Pair(vm.alloc(Object::Pair(Value::Symbol(q_i), exp, None)))
+    Value::Pair(vm.alloc_pair(Value::Symbol(q_i), exp, None))
 }
 
 fn append(vm: &mut Vm, exp1: Value, exp2: Value) -> Value {
-    let cdr1 = Value::Pair(vm.alloc(Object::Pair(exp2, Value::Nil, None)));
-    let cdr2 = Value::Pair(vm.alloc(Object::Pair(exp1, cdr1, None)));
+    let cdr1 = Value::Pair(vm.alloc_pair(exp2, Value::Nil, None));
+    let cdr2 = Value::Pair(vm.alloc_pair(exp1, cdr1, None));
     let q_i = vm.intern_static("list-append");
-    Value::Pair(vm.alloc(Object::Pair(Value::Symbol(q_i), cdr2, None)))
+    Value::Pair(vm.alloc_pair(Value::Symbol(q_i), cdr2, None))
 }
 
 fn rewrap(vm: &mut Vm, exp: Value, sym: &'static str) -> Value {
-    let cdr = Value::Pair(vm.alloc(Object::Pair(exp, Value::Nil, None)));
+    let cdr = Value::Pair(vm.alloc_pair(exp, Value::Nil, None));
     let q_i = vm.intern_static(sym);
-    let obj = Object::Pair(quote(vm, Value::Symbol(q_i)), cdr, None);
-    let cdr = Value::Pair(vm.alloc(obj));
+    let car = quote(vm, Value::Symbol(q_i));
+    let cdr = Value::Pair(vm.alloc_pair(car, cdr, None));
     list2(vm, cdr)
 }
 

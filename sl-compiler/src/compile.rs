@@ -2,7 +2,6 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use slvm::error::*;
-use slvm::heap::*;
 use slvm::opcodes::*;
 use slvm::value::*;
 use slvm::vm::*;
@@ -272,7 +271,7 @@ fn compile_fn(
     }
     new_state.chunk.input_regs = reserved;
     new_state.chunk.extra_regs = new_state.max_regs - reserved;
-    let lambda = Value::Lambda(vm.alloc(Object::Lambda(Rc::new(new_state.chunk))));
+    let lambda = Value::Lambda(vm.alloc_lambda(Rc::new(new_state.chunk)));
     let const_i = state.add_constant(lambda);
     state
         .chunk
@@ -329,7 +328,7 @@ fn compile_macro(
         .unwrap();
     new_state.chunk.input_regs = reserved;
     new_state.chunk.extra_regs = new_state.max_regs - reserved;
-    let mac = Value::Macro(vm.alloc(Object::Macro(Rc::new(new_state.chunk))));
+    let mac = Value::Macro(vm.alloc_macro(Rc::new(new_state.chunk)));
     let const_i = state.add_constant(mac);
     state
         .chunk
