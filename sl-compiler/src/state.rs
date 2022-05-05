@@ -27,7 +27,6 @@ type Captures = Rc<RefCell<Vec<(Interned, usize, usize)>>>;
 pub struct Symbols {
     pub data: Rc<RefCell<SymbolsInt>>,
     outer: Option<Rc<RefCell<Symbols>>>,
-    //namespace: Rc<RefCell<Namespace>>,
     pub captures: Captures,
 }
 

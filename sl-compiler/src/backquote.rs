@@ -10,7 +10,7 @@ macro_rules! is_tag {
     ($vm:expr, $exp:expr, $form:expr) => {{
         match $exp {
             Value::Pair(handle) => {
-                let (car, _, _) = $vm.get_pair(handle);
+                let (car, _) = $vm.get_pair(handle);
                 if car.is_symbol($form) {
                     return true;
                 }
@@ -33,16 +33,20 @@ macro_rules! get_data {
     ($vm:expr, $exp:expr) => {{
         match $exp {
             Value::Pair(handle) => {
-                let (_, cdr, meta) = $vm.get_pair(handle);
+                let (_, cdr) = $vm.get_pair(handle);
                 if let Value::Pair(cdr_handle) = cdr {
-                    let (ncar, ncdr, _) = $vm.get_pair(cdr_handle);
+                    let (ncar, ncdr) = $vm.get_pair(cdr_handle);
                     if ncdr.is_nil() {
                         return Ok(ncar);
                     } else {
-                        if let Some(meta) = meta {
+                        let (line, col) = (
+                            $vm.get_heap_property(handle, ":dbg-line"),
+                            $vm.get_heap_property(handle, ":dbg-col"),
+                        );
+                        if let (Some(Value::UInt(line)), Some(Value::UInt(col))) = (line, col) {
                             return Err(VMError::new_compile(format!(
                                 "Invalid tag at {}:{}, takes one expression.",
-                                meta.line, meta.col
+                                line, col
                             )));
                         } else {
                             return Err(VMError::new_compile("Invalid tag, takes one expression."));
@@ -102,15 +106,15 @@ impl Tag {
 }
 
 fn quote(vm: &mut Vm, exp: Value) -> Value {
-    let cdr = Value::Pair(vm.alloc_pair(exp, Value::Nil, None));
+    let cdr = vm.alloc_pair(exp, Value::Nil);
     let q_i = vm.intern_static("quote");
-    Value::Pair(vm.alloc_pair(Value::Symbol(q_i), cdr, None))
+    vm.alloc_pair(Value::Symbol(q_i), cdr)
 }
 
 fn list(vm: &mut Vm, exp: Value) -> Value {
-    let cdr = Value::Pair(vm.alloc_pair(exp, Value::Nil, None));
+    let cdr = vm.alloc_pair(exp, Value::Nil);
     let q_i = vm.intern_static("list");
-    Value::Pair(vm.alloc_pair(Value::Symbol(q_i), cdr, None))
+    vm.alloc_pair(Value::Symbol(q_i), cdr)
 }
 
 fn vec(vm: &mut Vm, v: &[Value]) -> Value {
@@ -118,31 +122,31 @@ fn vec(vm: &mut Vm, v: &[Value]) -> Value {
     if !v.is_empty() {
         let mut i = v.len();
         while i > 0 {
-            last_pair = Value::Pair(vm.alloc_pair(v[i - 1], last_pair, None));
+            last_pair = vm.alloc_pair(v[i - 1], last_pair);
             i -= 1;
         }
     }
     let q_i = vm.intern_static("vec");
-    Value::Pair(vm.alloc_pair(Value::Symbol(q_i), last_pair, None))
+    vm.alloc_pair(Value::Symbol(q_i), last_pair)
 }
 
 fn list2(vm: &mut Vm, exp: Value) -> Value {
     let q_i = vm.intern_static("list");
-    Value::Pair(vm.alloc_pair(Value::Symbol(q_i), exp, None))
+    vm.alloc_pair(Value::Symbol(q_i), exp)
 }
 
 fn append(vm: &mut Vm, exp1: Value, exp2: Value) -> Value {
-    let cdr1 = Value::Pair(vm.alloc_pair(exp2, Value::Nil, None));
-    let cdr2 = Value::Pair(vm.alloc_pair(exp1, cdr1, None));
+    let cdr1 = vm.alloc_pair(exp2, Value::Nil);
+    let cdr2 = vm.alloc_pair(exp1, cdr1);
     let q_i = vm.intern_static("list-append");
-    Value::Pair(vm.alloc_pair(Value::Symbol(q_i), cdr2, None))
+    vm.alloc_pair(Value::Symbol(q_i), cdr2)
 }
 
 fn rewrap(vm: &mut Vm, exp: Value, sym: &'static str) -> Value {
-    let cdr = Value::Pair(vm.alloc_pair(exp, Value::Nil, None));
+    let cdr = vm.alloc_pair(exp, Value::Nil);
     let q_i = vm.intern_static(sym);
     let car = quote(vm, Value::Symbol(q_i));
-    let cdr = Value::Pair(vm.alloc_pair(car, cdr, None));
+    let cdr = vm.alloc_pair(car, cdr);
     list2(vm, cdr)
 }
 
@@ -199,7 +203,7 @@ fn qq_expand(vm: &mut Vm, exp: Value, line: &mut u32, depth: u32) -> VMResult<Va
     } else {
         match exp {
             Value::Pair(handle) => {
-                let (car, cdr, _) = vm.get_pair(handle);
+                let (car, cdr) = vm.get_pair(handle);
                 let l1 = qq_expand_list(vm, car, line, depth)?;
                 if cdr.is_nil() {
                     Ok(l1)
@@ -255,7 +259,7 @@ fn qq_expand_list(vm: &mut Vm, exp: Value, line: &mut u32, depth: u32) -> VMResu
     } else {
         match exp {
             Value::Pair(handle) => {
-                let (car, cdr, _) = vm.get_pair(handle);
+                let (car, cdr) = vm.get_pair(handle);
                 let l1 = qq_expand_list(vm, car, line, depth)?;
                 if cdr.is_nil() {
                     Ok(list(vm, l1))

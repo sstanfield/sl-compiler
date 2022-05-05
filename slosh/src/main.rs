@@ -1,7 +1,7 @@
 extern crate sl_liner;
 
 use std::io::ErrorKind;
-use std::rc::Rc;
+use std::sync::Arc;
 
 use slvm::error::*;
 use slvm::opcodes::*;
@@ -88,9 +88,9 @@ fn load(vm: &mut Vm, registers: &[Value]) -> VMResult<Value> {
     let mut last = Value::Nil;
     for exp in exps {
         if let Value::Pair(h) = exp {
-            let (_, _, meta) = vm.get_pair(h);
-            if let Some(meta) = meta {
-                line = meta.line as u32;
+            let (_, _) = vm.get_pair(h);
+            if let Some(Value::UInt(dline)) = vm.get_heap_property(h, ":dbg-line") {
+                line = dline as u32;
             }
         }
         let mut state = CompileState::new_state(vm, name, line, None);
@@ -111,7 +111,7 @@ fn load(vm: &mut Vm, registers: &[Value]) -> VMResult<Value> {
             return Err(e);
         }
         state.chunk.extra_regs = state.max_regs;
-        let chunk = Rc::new(state.chunk.clone());
+        let chunk = Arc::new(state.chunk.clone());
         vm.execute(chunk)?;
         /*            if let Err(err) = vm.execute(chunk) {
             println!("ERROR: {}", err.display(&vm));
@@ -173,9 +173,9 @@ fn main() {
                 let mut line = 1;
                 for exp in exps {
                     if let Value::Pair(h) = exp {
-                        let (_, _, meta) = vm.get_pair(h);
-                        if let Some(meta) = meta {
-                            line = meta.line as u32;
+                        let (_, _) = vm.get_pair(h);
+                        if let Some(Value::UInt(dline)) = vm.get_heap_property(h, ":dbg-line") {
+                            line = dline as u32;
                         }
                     }
                     let mut state = CompileState::new_state(&mut vm, PROMPT_FN, line, None);
@@ -188,7 +188,7 @@ fn main() {
                     if let Err(e) = state.chunk.encode0(RET, line) {
                         println!("Compile error, line {}: {}", line, e);
                     }
-                    let chunk = Rc::new(state.chunk.clone());
+                    let chunk = Arc::new(state.chunk.clone());
                     if let Err(err) = vm.execute(chunk) {
                         println!("ERROR: {}", err.display(&vm));
                         if let Some(err_frame) = vm.err_frame() {

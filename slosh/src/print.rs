@@ -62,7 +62,7 @@ fn list_out(vm: &Vm, res: &mut String, lst: Value) {
         }
         match cdr {
             Value::Pair(h) => {
-                let (car, ncdr, _) = vm.get_pair(h);
+                let (car, ncdr) = vm.get_pair(h);
                 res.push_str(&display_value(vm, car));
                 cdr = ncdr;
             }
@@ -109,7 +109,7 @@ pub fn display_value(vm: &Vm, val: Value) -> String {
             res
         }
         Value::Pair(h) => {
-            let (car, cdr, _) = vm.get_pair(*h);
+            let (car, cdr) = vm.get_pair(*h);
             let mut res = String::new();
             if quotey(vm, car, &mut res) {
                 if let Some((cadr, Value::Nil)) = cdr.get_pair(vm) {
@@ -138,9 +138,7 @@ pub fn pretty_value(vm: &Vm, val: Value) -> String {
             format!("{}", String::from_utf8_lossy(&c[0..*l as usize]))
         }
         Value::CharClusterLong(_) => "Char".to_string(),
-        Value::String(h) => {
-            format!("{}", vm.get_string(*h))
-        }
+        Value::String(h) => vm.get_string(*h).to_string(),
         _ => display_value(vm, val),
     }
 }

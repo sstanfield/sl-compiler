@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::sync::Arc;
 
 use slvm::error::*;
 use slvm::opcodes::*;
@@ -38,7 +38,7 @@ fn eval(vm: &mut Vm, registers: &[Value]) -> VMResult<Value> {
         pass1(vm, &mut state, *exp).unwrap();
         compile(vm, &mut state, *exp, 0, &mut line).unwrap();
         state.chunk.encode0(RET, line).unwrap();
-        let chunk = Rc::new(state.chunk.clone());
+        let chunk = Arc::new(state.chunk.clone());
         Ok(vm.do_call(chunk, &[Value::Nil])?)
     } else {
         Err(VMError::new_compile("boo"))
@@ -63,9 +63,9 @@ fn main() {
     let file_i = vm.intern(&config.script);
     for exp in exps {
         if let Value::Pair(h) = exp {
-            let (_, _, meta) = vm.get_pair(h);
-            if let Some(meta) = meta {
-                line = meta.line as u32;
+            let (_, _) = vm.get_pair(h);
+            if let Some(Value::UInt(dline)) = vm.get_heap_property(h, ":dbg-line") {
+                line = dline as u32;
             }
         }
         let file_name = vm.get_interned(file_i);
@@ -78,7 +78,7 @@ fn main() {
             state.chunk.disassemble_chunk(&vm, 0).unwrap();
         }
         if config.run {
-            let chunk = Rc::new(state.chunk.clone());
+            let chunk = Arc::new(state.chunk.clone());
             if let Err(err) = vm.execute(chunk) {
                 println!("ERROR: {}", err);
                 vm.dump_globals();

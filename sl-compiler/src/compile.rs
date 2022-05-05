@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use slvm::error::*;
 use slvm::opcodes::*;
@@ -136,9 +137,9 @@ fn get_args_iter<'vm>(
 ) -> VMResult<Box<dyn Iterator<Item = Value> + 'vm>> {
     match args {
         Value::Pair(handle) => {
-            let (_, _, meta) = vm.get_pair(handle);
-            if let Some(meta) = meta {
-                *line = meta.line as u32;
+            let (_, _) = vm.get_pair(handle);
+            if let Some(Value::UInt(dline)) = vm.get_heap_property(handle, ":dbg-line") {
+                *line = dline as u32;
             }
             Ok(args.iter(vm))
         }
@@ -271,7 +272,7 @@ fn compile_fn(
     }
     new_state.chunk.input_regs = reserved;
     new_state.chunk.extra_regs = new_state.max_regs - reserved;
-    let lambda = Value::Lambda(vm.alloc_lambda(Rc::new(new_state.chunk)));
+    let lambda = vm.alloc_lambda(Arc::new(new_state.chunk));
     let const_i = state.add_constant(lambda);
     state
         .chunk
@@ -328,7 +329,7 @@ fn compile_macro(
         .unwrap();
     new_state.chunk.input_regs = reserved;
     new_state.chunk.extra_regs = new_state.max_regs - reserved;
-    let mac = Value::Macro(vm.alloc_macro(Rc::new(new_state.chunk)));
+    let mac = vm.alloc_macro(Arc::new(new_state.chunk));
     let const_i = state.add_constant(mac);
     state
         .chunk
@@ -1335,9 +1336,9 @@ fn compile_list(
             }
             Value::Lambda(h) => compile_call(vm, state, Value::Lambda(h), cdr, result, line)?,
             Value::Pair(h) => {
-                let (ncar, ncdr, meta) = vm.get_pair(h);
-                if let Some(meta) = meta {
-                    *line = meta.line as u32;
+                let (ncar, ncdr) = vm.get_pair(h);
+                if let Some(Value::UInt(dline)) = vm.get_heap_property(h, ":dbg-line") {
+                    *line = dline as u32;
                 }
                 let ncdr: Vec<Value> = ncdr.iter(vm).collect();
                 compile_list(vm, state, ncar, &ncdr[..], result, line)?;
@@ -1369,7 +1370,7 @@ pub fn pass1(vm: &mut Vm, state: &mut CompileState, exp: Value) -> VMResult<()> 
     let mac_ = vm.intern("macro");
     match exp {
         Value::Pair(handle) => {
-            let (car, _, _) = vm.get_pair(handle);
+            let (car, _) = vm.get_pair(handle);
             // short circuit on an fn form, will be handled with it's own state.
             if let Value::Symbol(i) = car {
                 if i == fn_ || i == mac_ {
@@ -1470,9 +1471,9 @@ pub fn compile(
     }
     match exp {
         Value::Pair(handle) => {
-            let (car, cdr, meta) = vm.get_pair(handle);
-            if let Some(meta) = meta {
-                *line = meta.line as u32;
+            let (car, cdr) = vm.get_pair(handle);
+            if let Some(Value::UInt(dline)) = vm.get_heap_property(handle, ":dbg-line") {
+                *line = dline as u32;
             }
             let cdr: Vec<Value> = cdr.iter(vm).collect();
             compile_list(vm, state, car, &cdr[..], result, line)?;

@@ -4,7 +4,6 @@ use std::error::Error;
 use std::fmt;
 use std::num::{ParseFloatError, ParseIntError};
 
-use slvm::heap::Meta;
 use slvm::value::*;
 use slvm::vm::*;
 use slvm::Chunk;
@@ -21,6 +20,11 @@ impl<I: std::iter::Iterator> PeekableIterator for std::iter::Peekable<I> {
 }
 
 pub type CharIter = Box<dyn PeekableIterator<Item = Cow<'static, str>>>;
+
+struct Meta {
+    line: u64,
+    col: u64,
+}
 
 #[derive(Clone, Debug)]
 pub struct ReadError {
@@ -65,6 +69,15 @@ impl Default for ReaderState {
             in_read: false,
         }
     }
+}
+
+fn alloc_pair(vm: &mut Vm, car: Value, cdr: Value, meta: &Meta) -> Value {
+    let result = vm.alloc_pair(car, cdr);
+    // Just allocated this so the unwrap is safe.
+    let handle = result.get_handle().unwrap();
+    vm.set_heap_property(handle, ":dbg-line", Value::UInt(meta.line));
+    vm.set_heap_property(handle, ":dbg-col", Value::UInt(meta.col));
+    result
 }
 
 fn is_whitespace(ch: &str) -> bool {
@@ -216,13 +229,11 @@ fn do_char(
                 v[i] = c;
             }
             Ok(Value::CharCluster(ch.len() as u8, v))
+        } else if let Value::String(handle) = vm.alloc_string(ch) {
+            Ok(Value::CharClusterLong(handle))
         } else {
-            Ok(Value::CharClusterLong(vm.alloc_string(ch)))
+            panic!("Invalid alloc_string!");
         }
-        /*Ok(make_exp(
-            ExpEnum::Char(environment.interner.intern(&*ch).into()),
-            meta,
-        ))*/
     } else {
         let reason = format!(
             "Not a valid char [{}]: line {}, col: {}",
@@ -726,7 +737,7 @@ fn read_vector(
 fn get_unquote_lst(vm: &mut Vm, exp: Value) -> Option<Value> {
     if let Value::Pair(h) = exp {
         let uq = vm.intern("unquote");
-        let (car, cdr, _) = vm.get_pair(h);
+        let (car, cdr) = vm.get_pair(h);
         if let Value::Symbol(si) = car {
             if si == uq {
                 return Some(cdr);
@@ -751,7 +762,7 @@ fn is_unquote_splice(vm: &mut Vm, exp: Value) -> bool {
         false
     }
     if let Value::Pair(h) = exp {
-        let (car, _, _) = vm.get_pair(h);
+        let (car, _) = vm.get_pair(h);
         is_splice(vm, car)
     } else if let Value::Vector(h) = exp {
         let v = vm.get_vector(h);
@@ -776,8 +787,8 @@ fn read_list(
     let mut head = Value::Nil;
     let mut tail = Value::Nil;
     let meta = Meta {
-        line: reader_state.line as u32,
-        col: reader_state.column as u16,
+        line: reader_state.line as u64,
+        col: reader_state.column as u64,
     };
     let mut cont = true;
     let mut dot = false;
@@ -815,7 +826,7 @@ fn read_list(
                         ichars,
                     ));
                 }
-                head = Value::Pair(vm.alloc_pair(exp, Value::Nil, Some(meta)));
+                head = alloc_pair(vm, exp, Value::Nil, &meta);
                 tail = head;
             } else if dot {
                 if is_unquote_splice(vm, exp) {
@@ -843,18 +854,18 @@ fn read_list(
                             ichars,
                         ));
                     }
-                    Value::Vector(vm.alloc_vector(v))
+                    vm.alloc_vector(v)
                 } else {
                     exp
                 };
                 if let Value::Pair(h) = tail {
-                    let (_, cdr, _) = vm.get_pair_mut(h);
+                    let (_, cdr) = vm.get_pair_mut(h);
                     *cdr = exp;
                 }
             } else {
-                let new_tail = Value::Pair(vm.alloc_pair(exp, Value::Nil, Some(meta)));
+                let new_tail = alloc_pair(vm, exp, Value::Nil, &meta);
                 if let Value::Pair(h) = tail {
-                    let (_, cdr, _) = vm.get_pair_mut(h);
+                    let (_, cdr) = vm.get_pair_mut(h);
                     *cdr = new_tail;
                 }
                 tail = new_tail;
@@ -959,8 +970,8 @@ fn read_inner(
             environment.reader_state.column,
         );*/
         let meta = Meta {
-            line: reader_state.line as u32,
-            col: reader_state.column as u16,
+            line: reader_state.line as u64,
+            col: reader_state.column as u64,
         };
         match &*ch {
             "\"" => {
@@ -971,12 +982,8 @@ fn read_inner(
             }
             "'" => match read_inner(vm, reader_state, chars, buffer, in_back_quote, false) {
                 Ok((Some(exp), ichars)) => {
-                    let cdr = vm.alloc_pair(exp, Value::Nil, Some(meta));
-                    let qlist = Value::Pair(vm.alloc_pair(
-                        Value::Symbol(i_quote),
-                        Value::Pair(cdr),
-                        Some(meta),
-                    ));
+                    let cdr = alloc_pair(vm, exp, Value::Nil, &meta);
+                    let qlist = alloc_pair(vm, Value::Symbol(i_quote), cdr, &meta);
                     return Ok((Some(qlist), ichars));
                 }
                 Ok((None, ichars)) => {
@@ -993,12 +1000,8 @@ fn read_inner(
             },
             "`" => match read_inner(vm, reader_state, chars, buffer, true, false) {
                 Ok((Some(exp), ichars)) => {
-                    let cdr = vm.alloc_pair(exp, Value::Nil, Some(meta));
-                    let qlist = Value::Pair(vm.alloc_pair(
-                        Value::Symbol(i_backquote),
-                        Value::Pair(cdr),
-                        Some(meta),
-                    ));
+                    let cdr = alloc_pair(vm, exp, Value::Nil, &meta);
+                    let qlist = alloc_pair(vm, Value::Symbol(i_backquote), cdr, &meta);
                     return Ok((Some(qlist), ichars));
                 }
                 Ok((None, ichars)) => {
@@ -1025,15 +1028,8 @@ fn read_inner(
                 };
                 match read_inner(vm, reader_state, chars, buffer, in_back_quote, false) {
                     Ok((Some(exp), ichars)) => {
-                        let cdr = vm.alloc_pair(exp, Value::Nil, Some(meta));
-                        return Ok((
-                            Some(Value::Pair(vm.alloc_pair(
-                                sym,
-                                Value::Pair(cdr),
-                                Some(meta),
-                            ))),
-                            ichars,
-                        ));
+                        let cdr = alloc_pair(vm, exp, Value::Nil, &meta);
+                        return Ok((Some(alloc_pair(vm, sym, cdr, &meta)), ichars));
                     }
                     Ok((None, ichars)) => {
                         return Err((
@@ -1085,7 +1081,7 @@ fn read_inner(
                     "(" => {
                         let (exp, chars) =
                             read_vector(vm, reader_state, chars, buffer, in_back_quote)?;
-                        return Ok((Some(Value::Vector(vm.alloc_vector(exp))), chars));
+                        return Ok((Some(vm.alloc_vector(exp)), chars));
                     }
                     "t" => {
                         return Ok((Some(Value::True), chars));
@@ -1287,19 +1283,19 @@ pub fn read(
                 Value::Pair(_) => Ok(exps[0]),
                 Value::Vector(_) => Ok(exps[0]),
                 Value::Nil => Ok(exps[0]),
-                _ => Ok(Value::Vector(vm.alloc_vector(exps))),
+                _ => Ok(vm.alloc_vector(exps)),
             }
         } else if exps.is_empty() {
             Err(ReadError {
                 reason: "Empty value".to_string(),
             })
         } else {
-            Ok(Value::Vector(vm.alloc_vector(exps)))
+            Ok(vm.alloc_vector(exps))
         }
     } else if exps.len() == 1 {
         Ok(exps[0])
     } else {
-        Ok(Value::Vector(vm.alloc_vector(exps)))
+        Ok(vm.alloc_vector(exps))
     }
 }
 
@@ -1310,7 +1306,7 @@ mod tests {
     fn to_strs(vm: &mut Vm, output: &mut Vec<String>, exp: Value) {
         match exp {
             Value::Pair(h) => {
-                let (e1, e2, _) = vm.get_pair(h);
+                let (e1, e2) = vm.get_pair(h);
                 if exp.is_proper_list(vm) {
                     output.push("(".to_string());
                     let exps: Vec<Value> = exp.iter(vm).collect();
@@ -1394,7 +1390,7 @@ mod tests {
             chars = ichars;
             token_exps.push(exp);
         }
-        let val = Value::Vector(vm.alloc_vector(token_exps));
+        let val = vm.alloc_vector(token_exps);
         to_strs(vm, &mut tokens, val);
         tokens
     }
