@@ -168,7 +168,7 @@ fn back_quote(vm: &mut Vm, exp: Value) -> Value {
 
 // Algorithm initially from
 // https://3e8.org/pub/scheme/doc/Quasiquotation%20in%20Lisp%20(Bawden).pdf
-fn qq_expand(vm: &mut Vm, exp: Value, line: &mut u32, depth: u32) -> VMResult<Value> {
+fn qq_expand(vm: &mut Vm, exp: Value, line: u32, depth: u32) -> VMResult<Value> {
     let tag = Tag::new(vm);
     if tag.is_unquote(vm, exp) {
         if depth == 0 {
@@ -225,7 +225,7 @@ fn qq_expand(vm: &mut Vm, exp: Value, line: &mut u32, depth: u32) -> VMResult<Va
     }
 }
 
-fn qq_expand_list(vm: &mut Vm, exp: Value, line: &mut u32, depth: u32) -> VMResult<Value> {
+fn qq_expand_list(vm: &mut Vm, exp: Value, line: u32, depth: u32) -> VMResult<Value> {
     let tag = Tag::new(vm);
     if tag.is_unquote(vm, exp) {
         if depth == 0 {
@@ -291,9 +291,13 @@ pub fn backquote(
     state: &mut CompileState,
     exp: Value,
     result: usize,
-    line: &mut u32,
+    line: &mut Option<&mut u32>,
 ) -> VMResult<()> {
-    let exp = qq_expand(vm, exp, line, 0)?;
+    let line_num = match line {
+        Some(l) => **l,
+        None => 0,
+    };
+    let exp = qq_expand(vm, exp, line_num, 0)?;
     pass1(vm, state, exp)?;
     compile(vm, state, exp, result, line)?;
     Ok(())

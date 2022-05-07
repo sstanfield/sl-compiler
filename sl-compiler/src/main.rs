@@ -10,6 +10,17 @@ use sl_compiler::config::*;
 use sl_compiler::reader::*;
 use sl_compiler::state::*;
 
+fn line_num(line: &Option<&mut u32>) -> u32 {
+    match line {
+        Some(line) => **line,
+        None => 0,
+    }
+}
+
+fn own_line(line: &Option<&mut u32>) -> Option<u32> {
+    line.as_ref().map(|l| **l)
+}
+
 fn pr(vm: &mut Vm, registers: &[Value]) -> VMResult<Value> {
     for v in registers {
         print!("{}", v.pretty_value(vm));
@@ -32,12 +43,13 @@ fn eval(vm: &mut Vm, registers: &[Value]) -> VMResult<Value> {
         ));
     }
     if let Some(exp) = registers.get(0) {
-        let mut line = 1;
-        let mut state = CompileState::new_state(vm, "none", line, None);
+        let mut linenum = 1;
+        let mut line = Some(&mut linenum);
+        let mut state = CompileState::new_state(vm, "none", line_num(&line), None);
         state.chunk.dbg_args = Some(Vec::new());
         pass1(vm, &mut state, *exp).unwrap();
         compile(vm, &mut state, *exp, 0, &mut line).unwrap();
-        state.chunk.encode0(RET, line).unwrap();
+        state.chunk.encode0(RET, own_line(&line)).unwrap();
         let chunk = Arc::new(state.chunk.clone());
         Ok(vm.do_call(chunk, &[Value::Nil])?)
     } else {
@@ -59,21 +71,24 @@ fn main() {
     //let mut state = CompileState::new();
     let txt = std::fs::read_to_string(&config.script).unwrap();
     let exps = read_all(&mut vm, &mut reader_state, &txt).unwrap();
-    let mut line = 1;
+    let mut linenum = 1;
+    let mut line = Some(&mut linenum);
     let file_i = vm.intern(&config.script);
     for exp in exps {
         if let Value::Pair(h) = exp {
             let (_, _) = vm.get_pair(h);
-            if let Some(Value::UInt(dline)) = vm.get_heap_property(h, ":dbg-line") {
-                line = dline as u32;
+            if let (Some(line), Some(Value::UInt(dline))) =
+                (&mut line, vm.get_heap_property(h, ":dbg-line"))
+            {
+                **line = dline as u32;
             }
         }
         let file_name = vm.get_interned(file_i);
-        let mut state = CompileState::new_state(&mut vm, file_name, line, None);
+        let mut state = CompileState::new_state(&mut vm, file_name, line_num(&line), None);
         state.chunk.dbg_args = Some(Vec::new());
         pass1(&mut vm, &mut state, exp).unwrap();
         compile(&mut vm, &mut state, exp, 0, &mut line).unwrap();
-        state.chunk.encode0(RET, line).unwrap();
+        state.chunk.encode0(RET, own_line(&line)).unwrap();
         if config.dump {
             state.chunk.disassemble_chunk(&vm, 0).unwrap();
         }

@@ -64,6 +64,13 @@ fn dasm(vm: &mut Vm, registers: &[Value]) -> VMResult<Value> {
     }
 }
 
+fn line_num(line: &Option<&mut u32>) -> u32 {
+    match line {
+        Some(line) => **line,
+        None => 0,
+    }
+}
+
 fn load(vm: &mut Vm, registers: &[Value]) -> VMResult<Value> {
     if registers.len() != 1 {
         return Err(VMError::new_compile(
@@ -84,30 +91,33 @@ fn load(vm: &mut Vm, registers: &[Value]) -> VMResult<Value> {
     let mut reader_state = ReaderState::new();
     let exps = read_all(vm, &mut reader_state, &txt)
         .map_err(|e| VMError::new_vm(format!("load: {}", e)))?;
-    let mut line = 1;
+    let mut linenum = 1;
+    let mut line = Some(&mut linenum);
     let mut last = Value::Nil;
     for exp in exps {
         if let Value::Pair(h) = exp {
             let (_, _) = vm.get_pair(h);
-            if let Some(Value::UInt(dline)) = vm.get_heap_property(h, ":dbg-line") {
-                line = dline as u32;
+            if let (Some(line), Some(Value::UInt(dline))) =
+                (&mut line, vm.get_heap_property(h, ":dbg-line"))
+            {
+                **line = dline as u32;
             }
         }
-        let mut state = CompileState::new_state(vm, name, line, None);
+        let mut state = CompileState::new_state(vm, name, line_num(&line), None);
         state.chunk.dbg_args = Some(Vec::new());
         //pass1(vm, &mut state, exp)?;
         //compile(vm, &mut state, exp, 0, &mut line)?;
         //state.chunk.encode0(RET, line)?;
         if let Err(e) = pass1(vm, &mut state, exp) {
-            println!("Compile error, {}, line {}: {}", name, line, e);
+            println!("Compile error, {}, line {}: {}", name, line_num(&line), e);
             return Err(e);
         }
         if let Err(e) = compile(vm, &mut state, exp, 0, &mut line) {
-            println!("Compile error, {} line {}: {}", name, line, e);
+            println!("Compile error, {} line {}: {}", name, line_num(&line), e);
             return Err(e);
         }
-        if let Err(e) = state.chunk.encode0(RET, line) {
-            println!("Compile error, {} line {}: {}", name, line, e);
+        if let Err(e) = state.chunk.encode0(RET, Some(line_num(&line))) {
+            println!("Compile error, {} line {}: {}", name, line_num(&line), e);
             return Err(e);
         }
         state.chunk.extra_regs = state.max_regs;
@@ -170,23 +180,25 @@ fn main() {
         let exps = read_all(&mut vm, &mut reader_state, &res);
         match exps {
             Ok(exps) => {
-                let mut line = 1;
+                let mut linenum = 1;
+                let mut line = Some(&mut linenum);
                 for exp in exps {
-                    if let Value::Pair(h) = exp {
+                    /*if let Value::Pair(h) = exp {
                         let (_, _) = vm.get_pair(h);
                         if let Some(Value::UInt(dline)) = vm.get_heap_property(h, ":dbg-line") {
                             line = dline as u32;
                         }
-                    }
-                    let mut state = CompileState::new_state(&mut vm, PROMPT_FN, line, None);
+                    }*/
+                    let mut state =
+                        CompileState::new_state(&mut vm, PROMPT_FN, line_num(&line), None);
                     if let Err(e) = pass1(&mut vm, &mut state, exp) {
-                        println!("Compile error, line {}: {}", line, e);
+                        println!("Compile error, line {}: {}", line_num(&line), e);
                     }
                     if let Err(e) = compile(&mut vm, &mut state, exp, 0, &mut line) {
-                        println!("Compile error, line {}: {}", line, e);
+                        println!("Compile error, line {}: {}", line_num(&line), e);
                     }
-                    if let Err(e) = state.chunk.encode0(RET, line) {
-                        println!("Compile error, line {}: {}", line, e);
+                    if let Err(e) = state.chunk.encode0(RET, Some(line_num(&line))) {
+                        println!("Compile error, line {}: {}", line_num(&line), e);
                     }
                     let chunk = Arc::new(state.chunk.clone());
                     if let Err(err) = vm.execute(chunk) {
