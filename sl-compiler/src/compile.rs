@@ -236,6 +236,7 @@ fn compile_fn(
     cdr: &[Value],
     result: usize,
     line: &mut Option<&mut u32>,
+    is_macro: bool,
 ) -> VMResult<()> {
     let (mut new_state, opt_comps) = mk_state(vm, state, args, line)?;
     for r in cdr.iter() {
@@ -288,6 +289,10 @@ fn compile_fn(
     new_state.chunk.input_regs = reserved;
     new_state.chunk.extra_regs = new_state.max_regs - reserved;
     let lambda = vm.alloc_lambda(Arc::new(new_state.chunk));
+    if is_macro {
+        // Unwrap safe since we just allocated lambda on the heap.
+        vm.set_heap_property(lambda.get_handle().unwrap(), ":macro", Value::True);
+    }
     let const_i = state.add_constant(lambda);
     state
         .chunk
@@ -297,59 +302,6 @@ fn compile_fn(
             .chunk
             .encode2(CLOSE, result as u16, result as u16, own_line(line))?;
     }
-    Ok(())
-}
-
-fn compile_macro(
-    vm: &mut Vm,
-    state: &mut CompileState,
-    args: Value,
-    cdr: &[Value],
-    result: usize,
-    line: &mut Option<&mut u32>,
-) -> VMResult<()> {
-    let (mut new_state, opt_comps) = mk_state(vm, state, args, line)?;
-    for r in cdr.iter() {
-        pass1(vm, &mut new_state, *r).unwrap();
-    }
-    let reserved = new_state.reserved_regs();
-    if let Some(opt_comps) = opt_comps {
-        let mut temp_state = CompileState::new_temp(vm, &new_state, line_num(line));
-        for (i, r) in opt_comps.into_iter().enumerate() {
-            let target_reg = new_state.chunk.args as usize + i + 1;
-            temp_state.chunk.code.clear();
-            let mut tlineval = own_line(line).unwrap_or(0);
-            let mut tline = Some(&mut tlineval);
-            compile(vm, &mut temp_state, r, reserved, &mut tline)?;
-            temp_state
-                .chunk
-                .encode2(MOV, target_reg as u16, reserved as u16, own_line(&tline))?;
-            new_state.chunk.encode2(
-                JMPFNU,
-                target_reg as u16,
-                temp_state.chunk.code.len() as u16,
-                own_line(line),
-            )?;
-            compile(vm, &mut new_state, r, reserved, line)?;
-            new_state
-                .chunk
-                .encode2(MOV, target_reg as u16, reserved as u16, own_line(line))?;
-        }
-    }
-    for r in cdr.iter() {
-        compile(vm, &mut new_state, *r, reserved, line)?;
-    }
-    new_state
-        .chunk
-        .encode1(SRET, reserved as u16, own_line(line))
-        .unwrap();
-    new_state.chunk.input_regs = reserved;
-    new_state.chunk.extra_regs = new_state.max_regs - reserved;
-    let mac = vm.alloc_macro(Arc::new(new_state.chunk));
-    let const_i = state.add_constant(mac);
-    state
-        .chunk
-        .encode2(CONST, result as u16, const_i as u16, own_line(line))?;
     Ok(())
 }
 
@@ -1149,6 +1101,14 @@ fn compile_let(
     result
 }
 
+fn is_macro(vm: &Vm, val: Value) -> bool {
+    match val {
+        Value::Lambda(h) => matches!(vm.get_heap_property(h, ":macro"), Some(Value::True)),
+        Value::Closure(h) => matches!(vm.get_heap_property(h, ":macro"), Some(Value::True)),
+        _ => false,
+    }
+}
+
 fn compile_list(
     vm: &mut Vm,
     state: &mut CompileState,
@@ -1164,14 +1124,14 @@ fn compile_list(
         match car {
             Value::Symbol(i) if i == state.specials.fn_ => {
                 if cdr.len() > 1 {
-                    compile_fn(vm, state, cdr[0], &cdr[1..], result, line)?
+                    compile_fn(vm, state, cdr[0], &cdr[1..], result, line, false)?
                 } else {
                     return Err(VMError::new_compile("Malformed fn form."));
                 }
             }
             Value::Symbol(i) if i == state.specials.mac_ => {
                 if cdr.len() > 1 {
-                    compile_macro(vm, state, cdr[0], &cdr[1..], result, line)?
+                    compile_fn(vm, state, cdr[0], &cdr[1..], result, line, true)?
                 } else {
                     return Err(VMError::new_compile("Malformed macro form."));
                 }
@@ -1346,7 +1306,7 @@ fn compile_list(
             }
             Value::Symbol(i) if i == state.specials.defer => {
                 if !cdr.is_empty() {
-                    compile_fn(vm, state, Value::Nil, &cdr[0..], result, line)?;
+                    compile_fn(vm, state, Value::Nil, &cdr[0..], result, line, false)?;
                     state.chunk.encode1(DFR, result as u16, own_line(line))?;
                     state.defers += 1;
                 } else {
@@ -1373,11 +1333,23 @@ fn compile_list(
                     if let Value::Undefined = global {
                         eprintln!("Warning: {} not defined.", vm.get_interned(i));
                     }
-                    if let Value::Macro(h) = global {
-                        let mac = vm.get_macro(h);
-                        let exp = vm.do_call(mac, cdr)?;
-                        pass1(vm, state, exp)?;
-                        compile(vm, state, exp, result, &mut None)?
+                    if is_macro(vm, global) {
+                        match global {
+                            Value::Lambda(h) => {
+                                let mac = vm.get_lambda(h);
+                                let exp = vm.do_call(mac, cdr, None)?;
+                                pass1(vm, state, exp)?;
+                                compile(vm, state, exp, result, &mut None)?
+                            }
+                            Value::Closure(h) => {
+                                let (mac, caps) = vm.get_closure(h);
+                                let caps = caps.to_vec();
+                                let exp = vm.do_call(mac, cdr, Some(&caps))?;
+                                pass1(vm, state, exp)?;
+                                compile(vm, state, exp, result, &mut None)?
+                            }
+                            _ => panic!("Invalid macro!"),
+                        }
                     } else {
                         compile_callg(vm, state, slot as u32, cdr, result, line)?
                     }

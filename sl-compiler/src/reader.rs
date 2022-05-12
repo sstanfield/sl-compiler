@@ -1352,8 +1352,7 @@ mod tests {
         if let Ok(exp) = exp {
             to_strs(vm, &mut tokens, exp);
         } else {
-            println!("{:?}", exp);
-            assert!(false);
+            panic!("Got unexpected token error: {:?}", exp);
         }
         tokens
     }
@@ -1366,12 +1365,9 @@ mod tests {
     ) -> ReadError {
         let exp = read(vm, reader_state, input, false);
         if let Err(err) = exp {
-            return err;
+            err
         } else {
-            assert!(false);
-        }
-        ReadError {
-            reason: "WTF".to_string(),
+            panic!("Not an error but must be an error!");
         }
     }
 
@@ -1381,7 +1377,7 @@ mod tests {
         let ntext = unsafe { &*(input as *const str) };
         let mut chars: CharIter = Box::new(
             UnicodeSegmentation::graphemes(ntext, true)
-                .map(|s| Cow::Borrowed(s))
+                .map(Cow::Borrowed)
                 .peekable(),
         );
         let mut tokens = Vec::new();
@@ -1396,8 +1392,7 @@ mod tests {
     }
 
     fn build_def_vm() -> Vm {
-        let vm = Vm::new();
-        vm
+        Vm::new()
     }
 
     #[test]

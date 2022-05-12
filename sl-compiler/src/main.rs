@@ -51,7 +51,7 @@ fn eval(vm: &mut Vm, registers: &[Value]) -> VMResult<Value> {
         compile(vm, &mut state, *exp, 0, &mut line).unwrap();
         state.chunk.encode0(RET, own_line(&line)).unwrap();
         let chunk = Arc::new(state.chunk.clone());
-        Ok(vm.do_call(chunk, &[Value::Nil])?)
+        Ok(vm.do_call(chunk, &[Value::Nil], None)?)
     } else {
         Err(VMError::new_compile("boo"))
     }
