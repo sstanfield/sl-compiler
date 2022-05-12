@@ -8,6 +8,6 @@ edition = "2018"
 [dependencies]
 sl-compiler = { path = "../sl-compiler" }
 sl-liner = { git = "https://github.com/sl-sh-dev/sl-liner.git" }
-slvm = { path = "../../slvm" }
-#slvm = { git = "https://github.com/sstanfield/slvm.git" }
+#slvm = { path = "../../slvm" }
+slvm = { git = "https://github.com/sstanfield/slvm.git" }
 

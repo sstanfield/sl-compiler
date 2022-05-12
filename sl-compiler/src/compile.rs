@@ -1431,7 +1431,6 @@ pub fn pass1(vm: &mut Vm, state: &mut CompileState, exp: Value) -> VMResult<()> 
         Value::String(_) => {}
         Value::Bytes(_) => {}
         Value::Lambda(_) => {}
-        Value::Macro(_) => {}
         Value::Closure(_) => {}
         Value::Continuation(_) => {}
         Value::CallFrame(_) => {}

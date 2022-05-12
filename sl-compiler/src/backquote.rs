@@ -106,15 +106,15 @@ impl Tag {
 }
 
 fn quote(vm: &mut Vm, exp: Value) -> Value {
-    let cdr = vm.alloc_pair(exp, Value::Nil);
+    let cdr = vm.alloc_pair_ro(exp, Value::Nil);
     let q_i = vm.intern_static("quote");
-    vm.alloc_pair(Value::Symbol(q_i), cdr)
+    vm.alloc_pair_ro(Value::Symbol(q_i), cdr)
 }
 
 fn list(vm: &mut Vm, exp: Value) -> Value {
-    let cdr = vm.alloc_pair(exp, Value::Nil);
+    let cdr = vm.alloc_pair_ro(exp, Value::Nil);
     let q_i = vm.intern_static("list");
-    vm.alloc_pair(Value::Symbol(q_i), cdr)
+    vm.alloc_pair_ro(Value::Symbol(q_i), cdr)
 }
 
 fn vec(vm: &mut Vm, v: &[Value]) -> Value {
@@ -122,31 +122,31 @@ fn vec(vm: &mut Vm, v: &[Value]) -> Value {
     if !v.is_empty() {
         let mut i = v.len();
         while i > 0 {
-            last_pair = vm.alloc_pair(v[i - 1], last_pair);
+            last_pair = vm.alloc_pair_ro(v[i - 1], last_pair);
             i -= 1;
         }
     }
     let q_i = vm.intern_static("vec");
-    vm.alloc_pair(Value::Symbol(q_i), last_pair)
+    vm.alloc_pair_ro(Value::Symbol(q_i), last_pair)
 }
 
 fn list2(vm: &mut Vm, exp: Value) -> Value {
     let q_i = vm.intern_static("list");
-    vm.alloc_pair(Value::Symbol(q_i), exp)
+    vm.alloc_pair_ro(Value::Symbol(q_i), exp)
 }
 
 fn append(vm: &mut Vm, exp1: Value, exp2: Value) -> Value {
-    let cdr1 = vm.alloc_pair(exp2, Value::Nil);
-    let cdr2 = vm.alloc_pair(exp1, cdr1);
+    let cdr1 = vm.alloc_pair_ro(exp2, Value::Nil);
+    let cdr2 = vm.alloc_pair_ro(exp1, cdr1);
     let q_i = vm.intern_static("list-append");
-    vm.alloc_pair(Value::Symbol(q_i), cdr2)
+    vm.alloc_pair_ro(Value::Symbol(q_i), cdr2)
 }
 
 fn rewrap(vm: &mut Vm, exp: Value, sym: &'static str) -> Value {
-    let cdr = vm.alloc_pair(exp, Value::Nil);
+    let cdr = vm.alloc_pair_ro(exp, Value::Nil);
     let q_i = vm.intern_static(sym);
     let car = quote(vm, Value::Symbol(q_i));
-    let cdr = vm.alloc_pair(car, cdr);
+    let cdr = vm.alloc_pair_ro(car, cdr);
     list2(vm, cdr)
 }
 
@@ -299,6 +299,6 @@ pub fn backquote(
     };
     let exp = qq_expand(vm, exp, line_num, 0)?;
     pass1(vm, state, exp)?;
-    compile(vm, state, exp, result, line)?;
+    compile(vm, state, exp, result, &mut None)?; //line)?;
     Ok(())
 }

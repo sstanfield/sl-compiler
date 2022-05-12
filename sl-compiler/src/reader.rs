@@ -72,7 +72,7 @@ impl Default for ReaderState {
 }
 
 fn alloc_pair(vm: &mut Vm, car: Value, cdr: Value, meta: &Meta) -> Value {
-    let result = vm.alloc_pair(car, cdr);
+    let result = vm.alloc_pair_ro(car, cdr);
     // Just allocated this so the unwrap is safe.
     let handle = result.get_handle().unwrap();
     vm.set_heap_property(handle, ":dbg-line", Value::UInt(meta.line));
@@ -229,7 +229,7 @@ fn do_char(
                 v[i] = c;
             }
             Ok(Value::CharCluster(ch.len() as u8, v))
-        } else if let Value::String(handle) = vm.alloc_string(ch) {
+        } else if let Value::String(handle) = vm.alloc_string_ro(ch.to_string()) {
             Ok(Value::CharClusterLong(handle))
         } else {
             panic!("Invalid alloc_string!");
@@ -854,18 +854,18 @@ fn read_list(
                             ichars,
                         ));
                     }
-                    vm.alloc_vector(v)
+                    vm.alloc_vector_ro(v)
                 } else {
                     exp
                 };
                 if let Value::Pair(h) = tail {
-                    let (_, cdr) = vm.get_pair_mut(h);
+                    let (_, cdr) = vm.get_pair_mut_override(h);
                     *cdr = exp;
                 }
             } else {
                 let new_tail = alloc_pair(vm, exp, Value::Nil, &meta);
                 if let Value::Pair(h) = tail {
-                    let (_, cdr) = vm.get_pair_mut(h);
+                    let (_, cdr) = vm.get_pair_mut_override(h);
                     *cdr = new_tail;
                 }
                 tail = new_tail;
@@ -1081,7 +1081,7 @@ fn read_inner(
                     "(" => {
                         let (exp, chars) =
                             read_vector(vm, reader_state, chars, buffer, in_back_quote)?;
-                        return Ok((Some(vm.alloc_vector(exp)), chars));
+                        return Ok((Some(vm.alloc_vector_ro(exp)), chars));
                     }
                     "t" => {
                         return Ok((Some(Value::True), chars));
@@ -1283,19 +1283,19 @@ pub fn read(
                 Value::Pair(_) => Ok(exps[0]),
                 Value::Vector(_) => Ok(exps[0]),
                 Value::Nil => Ok(exps[0]),
-                _ => Ok(vm.alloc_vector(exps)),
+                _ => Ok(vm.alloc_vector_ro(exps)),
             }
         } else if exps.is_empty() {
             Err(ReadError {
                 reason: "Empty value".to_string(),
             })
         } else {
-            Ok(vm.alloc_vector(exps))
+            Ok(vm.alloc_vector_ro(exps))
         }
     } else if exps.len() == 1 {
         Ok(exps[0])
     } else {
-        Ok(vm.alloc_vector(exps))
+        Ok(vm.alloc_vector_ro(exps))
     }
 }
 
@@ -1386,7 +1386,7 @@ mod tests {
             chars = ichars;
             token_exps.push(exp);
         }
-        let val = vm.alloc_vector(token_exps);
+        let val = vm.alloc_vector_ro(token_exps);
         to_strs(vm, &mut tokens, val);
         tokens
     }

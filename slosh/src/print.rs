@@ -96,7 +96,6 @@ pub fn display_value(vm: &Vm, val: Value) -> String {
         Value::Nil => "nil".to_string(),
         Value::Undefined => "#<Undefined>".to_string(), //panic!("Tried to get type for undefined!"),
         Value::Lambda(_) => "#<Lambda>".to_string(),
-        Value::Macro(_) => "#<Macro>".to_string(),
         Value::Closure(_) => "#<Lambda>".to_string(),
         Value::Continuation(_) => "#<Continuation>".to_string(),
         Value::CallFrame(_) => "#<CallFrame>".to_string(),

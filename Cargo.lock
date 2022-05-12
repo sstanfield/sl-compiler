@@ -211,6 +211,7 @@ dependencies = [
 [[package]]
 name = "slvm"
 version = "0.1.0"
+source = "git+https://github.com/sstanfield/slvm.git#6b5f49262d6bd5ba4cf3c121127ad8d58d10943d"
 
 [[package]]
 name = "smallvec"
