@@ -98,7 +98,7 @@ fn load(vm: &mut Vm, registers: &[Value]) -> VMResult<Value> {
         if let Value::Pair(h) = exp {
             let (_, _) = vm.get_pair(h);
             if let (Some(line), Some(Value::UInt(dline))) =
-                (&mut line, vm.get_heap_property(h, ":dbg-line"))
+                (&mut line, vm.get_heap_property(h, "dbg-line"))
             {
                 **line = dline as u32;
             }
@@ -152,20 +152,28 @@ fn vec_slice(vm: &mut Vm, registers: &[Value]) -> VMResult<Value> {
             }
         }
         3 => {
-            if let (Value::Vector(vector), Ok(start), Ok(end)) = (registers[0], registers[1].get_int(), registers[2].get_int()) {
+            if let (Value::Vector(vector), Ok(start), Ok(end)) =
+                (registers[0], registers[1].get_int(), registers[2].get_int())
+            {
                 let v = vm.get_vector(vector);
                 (v, start as usize, end as usize)
             } else {
                 return Err(VMError::new_vm("vec-slice: Invalid arguments".to_string()));
             }
         }
-        _ => return Err(VMError::new_vm("vec-slice: Invalid arguments (requires two or three)".to_string())),
+        _ => {
+            return Err(VMError::new_vm(
+                "vec-slice: Invalid arguments (requires two or three)".to_string(),
+            ))
+        }
     };
     let len = vector.len();
     if start == len && end <= len {
         Ok(vm.alloc_vector(Vec::new()))
     } else if start >= len || end > len {
-        Err(VMError::new_vm("vec-slice: Invalid arguments- out of bounds".to_string()))
+        Err(VMError::new_vm(
+            "vec-slice: Invalid arguments- out of bounds".to_string(),
+        ))
     } else {
         let new_vec = vector[start..end].to_vec();
         Ok(vm.alloc_vector(new_vec))
@@ -174,24 +182,70 @@ fn vec_slice(vm: &mut Vm, registers: &[Value]) -> VMResult<Value> {
 
 fn vec_to_list(vm: &mut Vm, registers: &[Value]) -> VMResult<Value> {
     if registers.len() != 1 {
-        return Err(VMError::new_vm("vec->list: Invalid arguments (requires one vector)".to_string()));
+        return Err(VMError::new_vm(
+            "vec->list: Invalid arguments (requires one vector)".to_string(),
+        ));
     }
     if let Value::Vector(vhandle) = registers[0] {
         let vector = vm.get_vector(vhandle).to_vec();
 
         let mut last = Value::Nil;
-        for item in vector
-            .iter()
-            .rev()
-        {
+        for item in vector.iter().rev() {
             let old_last = last;
             last = vm.alloc_pair(*item, old_last);
         }
         Ok(last)
     } else {
-        Err(VMError::new_vm("vec->list: Invalid arguments (requires one vector)".to_string()))
+        Err(VMError::new_vm(
+            "vec->list: Invalid arguments (requires one vector)".to_string(),
+        ))
     }
+}
 
+fn get_prop(vm: &mut Vm, registers: &[Value]) -> VMResult<Value> {
+    if registers.len() != 2 {
+        return Err(VMError::new_vm(
+            "get-prop: Invalid arguments (object symbol)".to_string(),
+        ));
+    }
+    let key = match registers[1] {
+        Value::Keyword(key) => key,
+        Value::Symbol(key) => key,
+        _ => return Err(VMError::new_vm("get-prop: key must be a symbol")),
+    };
+    if let Value::Global(idx) = registers[0] {
+        Ok(vm.get_global_property(idx, key).unwrap_or(Value::Nil))
+    } else {
+        let handle = registers[0].get_handle().ok_or_else(|| {
+            VMError::new_vm("get-prop: Not a heap object or global symbol".to_string())
+        })?;
+        Ok(vm
+            .get_heap_property_interned(handle, key)
+            .unwrap_or(Value::Nil))
+    }
+}
+
+fn set_prop(vm: &mut Vm, registers: &[Value]) -> VMResult<Value> {
+    if registers.len() != 3 {
+        return Err(VMError::new_vm(
+            "set-prop: Invalid arguments (object symbol value)".to_string(),
+        ));
+    }
+    let key = match registers[1] {
+        Value::Keyword(key) => key,
+        Value::Symbol(key) => key,
+        _ => return Err(VMError::new_vm("set-prop: key must be a symbol")),
+    };
+    if let Value::Global(idx) = registers[0] {
+        vm.set_global_property(idx, key, registers[2]);
+        Ok(registers[2])
+    } else {
+        let handle = registers[0].get_handle().ok_or_else(|| {
+            VMError::new_vm("set-prop: Not a heap object or global symbol".to_string())
+        })?;
+        vm.set_heap_property_interned(handle, key, registers[2]);
+        Ok(registers[2])
+    }
 }
 
 const PROMPT_FN: &str = "prompt";
@@ -208,6 +262,8 @@ fn main() {
     vm.set_global("load", Value::Builtin(CallFunc { func: load }));
     vm.set_global("vec-slice", Value::Builtin(CallFunc { func: vec_slice }));
     vm.set_global("vec->list", Value::Builtin(CallFunc { func: vec_to_list }));
+    vm.set_global("get-prop", Value::Builtin(CallFunc { func: get_prop }));
+    vm.set_global("set-prop", Value::Builtin(CallFunc { func: set_prop }));
     //vm.set_global("eval", Value::Builtin(CallFunc { func: eval }));
     loop {
         let res = match con.read_line(Prompt::from("slosh> "), None) {
@@ -240,7 +296,7 @@ fn main() {
                 for exp in exps {
                     /*if let Value::Pair(h) = exp {
                         let (_, _) = vm.get_pair(h);
-                        if let Some(Value::UInt(dline)) = vm.get_heap_property(h, ":dbg-line") {
+                        if let Some(Value::UInt(dline)) = vm.get_heap_property(h, "dbg-line") {
                             line = dline as u32;
                         }
                     }*/

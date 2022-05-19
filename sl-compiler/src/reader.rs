@@ -75,8 +75,8 @@ fn alloc_pair(vm: &mut Vm, car: Value, cdr: Value, meta: &Meta) -> Value {
     let result = vm.alloc_pair_ro(car, cdr);
     // Just allocated this so the unwrap is safe.
     let handle = result.get_handle().unwrap();
-    vm.set_heap_property(handle, ":dbg-line", Value::UInt(meta.line));
-    vm.set_heap_property(handle, ":dbg-col", Value::UInt(meta.col));
+    vm.set_heap_property(handle, "dbg-line", Value::UInt(meta.line));
+    vm.set_heap_property(handle, "dbg-col", Value::UInt(meta.col));
     result
 }
 

@@ -138,8 +138,7 @@ fn compile_call_myself(
 }
 
 fn set_line(vm: &Vm, handle: Handle, line: &mut Option<&mut u32>) {
-    if let (Some(Value::UInt(dline)), Some(line)) =
-        (vm.get_heap_property(handle, ":dbg-line"), line)
+    if let (Some(Value::UInt(dline)), Some(line)) = (vm.get_heap_property(handle, "dbg-line"), line)
     {
         **line = dline as u32;
     }
@@ -960,8 +959,29 @@ fn compile_def(
     } else if cdr.len() == 3 {
         // XXX implement docstrings
         if let Value::Symbol(si) = cdr[0] {
-            compile(vm, state, cdr[2], result + 1, line)?;
             let si_const = vm.reserve_index(si);
+            // Set docstring
+            let set_prop = vm.intern("set-prop");
+            if let Some(set_prop) = vm.global_intern_slot(set_prop) {
+                let doc_const = state
+                    .chunk
+                    .add_constant(Value::Keyword(vm.intern("doc-string")));
+                state
+                    .chunk
+                    .encode_refi((result + 1) as u16, si_const, own_line(line))?;
+                state.chunk.encode2(
+                    CONST,
+                    (result + 2) as u16,
+                    doc_const as u16,
+                    own_line(line),
+                )?;
+                compile(vm, state, cdr[1], result + 3, line)?;
+                state
+                    .chunk
+                    .encode_callg(set_prop as u32, 3, result as u16, own_line(line))?;
+            }
+
+            compile(vm, state, cdr[2], result + 1, line)?;
             state
                 .chunk
                 .encode_refi(result as u16, si_const, own_line(line))?;

@@ -78,7 +78,7 @@ fn main() {
         if let Value::Pair(h) = exp {
             let (_, _) = vm.get_pair(h);
             if let (Some(line), Some(Value::UInt(dline))) =
-                (&mut line, vm.get_heap_property(h, ":dbg-line"))
+                (&mut line, vm.get_heap_property(h, "dbg-line"))
             {
                 **line = dline as u32;
             }

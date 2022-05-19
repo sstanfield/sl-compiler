@@ -7,8 +7,8 @@ edition = "2018"
 
 [dependencies]
 unicode-segmentation = "1.7.1"
-#slvm = { path = "../../slvm" }
-slvm = { git = "https://github.com/sstanfield/slvm.git" }
+slvm = { path = "../../slvm" }
+#slvm = { git = "https://github.com/sstanfield/slvm.git" }
 
 [build-dependencies]
 chrono = "0.4.7"

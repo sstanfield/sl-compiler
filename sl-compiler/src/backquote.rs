@@ -40,8 +40,8 @@ macro_rules! get_data {
                         return Ok(ncar);
                     } else {
                         let (line, col) = (
-                            $vm.get_heap_property(handle, ":dbg-line"),
-                            $vm.get_heap_property(handle, ":dbg-col"),
+                            $vm.get_heap_property(handle, "dbg-line"),
+                            $vm.get_heap_property(handle, "dbg-col"),
                         );
                         if let (Some(Value::UInt(line)), Some(Value::UInt(col))) = (line, col) {
                             return Err(VMError::new_compile(format!(
