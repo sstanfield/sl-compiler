@@ -243,26 +243,22 @@ fn compile_fn(
     }
     let reserved = new_state.reserved_regs();
     if let Some(opt_comps) = opt_comps {
-        let mut temp_state = CompileState::new_temp(vm, &new_state, own_line(line).unwrap_or(0));
         for (i, r) in opt_comps.into_iter().enumerate() {
             let target_reg = new_state.chunk.args as usize + i + 1;
-            temp_state.chunk.code.clear();
-            let mut tlineval = own_line(line).unwrap_or(0);
-            let mut tline = Some(&mut tlineval);
-            compile(vm, &mut temp_state, r, reserved, &mut tline)?;
-            temp_state
+            new_state
                 .chunk
-                .encode2(MOV, target_reg as u16, reserved as u16, own_line(&tline))?;
-            new_state.chunk.encode2(
-                JMPFNU,
-                target_reg as u16,
-                temp_state.chunk.code.len() as u16,
-                own_line(line),
-            )?;
+                .encode1(JMPNU, target_reg as u16, own_line(line))?;
+            let encode_offset = new_state.chunk.code.len();
+            new_state.chunk.encode_jump_offset(0)?;
+            let start_offset = new_state.chunk.code.len();
             compile(vm, &mut new_state, r, reserved, line)?;
             new_state
                 .chunk
                 .encode2(MOV, target_reg as u16, reserved as u16, own_line(line))?;
+            new_state.chunk.reencode_jump_offset(
+                encode_offset,
+                (new_state.chunk.code.len() - start_offset) as i32,
+            )?;
         }
     }
     let last_thing = cdr.len() - 1;
@@ -287,7 +283,9 @@ fn compile_fn(
     }
     new_state.chunk.input_regs = reserved;
     new_state.chunk.extra_regs = new_state.max_regs - reserved;
+    vm.pause_gc();
     let lambda = vm.alloc_lambda(Arc::new(new_state.chunk));
+    vm.unpause_gc();
     if is_macro {
         // Unwrap safe since we just allocated lambda on the heap.
         vm.set_heap_property(lambda.get_handle().unwrap(), ":macro", Value::True);
@@ -815,11 +813,10 @@ fn compile_if(
             line_num(line)
         )));
     }
-    let mut temp_state = CompileState::new_temp(vm, state, line_num(line));
     let tail = state.tail;
     state.tail = false;
     let mut end_patches = Vec::new();
-    let mut cdr_i = cdr.iter();
+    let mut cdr_i = cdr.iter().peekable();
     while let Some(r) = cdr_i.next() {
         let next = cdr_i.next();
         if next.is_none() {
@@ -828,30 +825,27 @@ fn compile_if(
         compile(vm, state, *r, result, line)?;
         if let Some(r) = next {
             state.tail = tail;
-            temp_state.tail = tail;
-            temp_state.chunk.code.clear();
-            let mut tlineval = own_line(line).unwrap_or(0);
-            let mut tline = Some(&mut tlineval);
-            compile(vm, &mut temp_state, *r, result, &mut tline)?;
-            temp_state.chunk.encode1(JMPF, 256, own_line(&tline))?; // Force wide for constant size.
-            state.chunk.encode2(
-                JMPFF,
-                result as u16,
-                temp_state.chunk.code.len() as u16,
-                own_line(line),
-            )?;
+            state.chunk.encode1(JMPF, result as u16, own_line(line))?;
+            let encode_offset = state.chunk.code.len();
+            state.chunk.encode_jump_offset(0)?;
+            let tmp_start_ip = state.chunk.code.len();
             compile(vm, state, *r, result, line)?;
-            state.chunk.encode1(JMPF, 256, own_line(line))?; // Force wide for constant size.
-            end_patches.push(state.chunk.code.len());
+            if cdr_i.peek().is_some() {
+                state.chunk.encode0(JMP, own_line(line))?;
+                state.chunk.encode_jump_offset(0)?;
+                end_patches.push(state.chunk.code.len());
+            }
+            state.chunk.reencode_jump_offset(
+                encode_offset,
+                (state.chunk.code.len() - tmp_start_ip) as i32,
+            )?;
         }
         state.tail = false;
     }
     let end_ip = state.chunk.code.len();
     for i in end_patches {
-        let f = (end_ip - i) as u16;
-        // XXX TODO, if less then u8 then remove WIDE and pad with NOP
-        state.chunk.code[i - 2] = ((f & 0xFF00) >> 8) as u8;
-        state.chunk.code[i - 1] = (f & 0x00FF) as u8;
+        let jmp_forward = (end_ip - i) as i32;
+        state.chunk.reencode_jump_offset(i - 3, jmp_forward)?;
     }
     Ok(())
 }
@@ -872,7 +866,7 @@ fn compile_and(
     let tail = state.tail;
     state.tail = false;
     let mut end_patches = Vec::new();
-    let mut cdr_i = cdr.iter();
+    let mut cdr_i = cdr.iter().peekable();
     let mut next = cdr_i.next();
     while let Some(r) = next {
         next = cdr_i.next();
@@ -880,18 +874,17 @@ fn compile_and(
             state.tail = tail;
         }
         compile(vm, state, *r, result, line)?;
-        state
-            .chunk
-            .encode2(JMPFF, result as u16, 256, own_line(line))?; // Force wide for constant size.
-        end_patches.push(state.chunk.code.len());
+        if cdr_i.peek().is_some() {
+            state.chunk.encode1(JMPF, result as u16, own_line(line))?;
+            state.chunk.encode_jump_offset(0)?;
+            end_patches.push(state.chunk.code.len());
+        }
         state.tail = false;
     }
     let end_ip = state.chunk.code.len();
     for i in end_patches {
-        let f = (end_ip - i) as u16;
-        // XXX TODO, if less then u8 then remove WIDE and pad with NOP
-        state.chunk.code[i - 2] = ((f & 0xFF00) >> 8) as u8;
-        state.chunk.code[i - 1] = (f & 0x00FF) as u8;
+        let jmp_forward = (end_ip - i) as i32;
+        state.chunk.reencode_jump_offset(i - 3, jmp_forward)?;
     }
     Ok(())
 }
@@ -912,7 +905,7 @@ fn compile_or(
     let tail = state.tail;
     state.tail = false;
     let mut end_patches = Vec::new();
-    let mut cdr_i = cdr.iter();
+    let mut cdr_i = cdr.iter().peekable();
     let mut next = cdr_i.next();
     while let Some(r) = next {
         next = cdr_i.next();
@@ -920,18 +913,17 @@ fn compile_or(
             state.tail = tail;
         }
         compile(vm, state, *r, result, line)?;
-        state
-            .chunk
-            .encode2(JMPFT, result as u16, 256, own_line(line))?; // Force wide for constant size.
-        end_patches.push(state.chunk.code.len());
+        if cdr_i.peek().is_some() {
+            state.chunk.encode1(JMPT, result as u16, own_line(line))?;
+            state.chunk.encode_jump_offset(0)?;
+            end_patches.push(state.chunk.code.len());
+        }
         state.tail = false;
     }
     let end_ip = state.chunk.code.len();
     for i in end_patches {
-        let f = (end_ip - i) as u16;
-        // XXX TODO, if less then u8 then remove WIDE and pad with NOP
-        state.chunk.code[i - 2] = ((f & 0xFF00) >> 8) as u8;
-        state.chunk.code[i - 1] = (f & 0x00FF) as u8;
+        let jmp_forward = (end_ip - i) as i32;
+        state.chunk.reencode_jump_offset(i - 3, jmp_forward)?;
     }
     Ok(())
 }
@@ -1357,14 +1349,18 @@ fn compile_list(
                         match global {
                             Value::Lambda(h) => {
                                 let mac = vm.get_lambda(h);
+                                vm.pause_gc();
                                 let exp = vm.do_call(mac, cdr, None)?;
+                                vm.unpause_gc();
                                 pass1(vm, state, exp)?;
                                 compile(vm, state, exp, result, &mut None)?
                             }
                             Value::Closure(h) => {
                                 let (mac, caps) = vm.get_closure(h);
                                 let caps = caps.to_vec();
+                                vm.pause_gc();
                                 let exp = vm.do_call(mac, cdr, Some(&caps))?;
+                                vm.unpause_gc();
                                 pass1(vm, state, exp)?;
                                 compile(vm, state, exp, result, &mut None)?
                             }

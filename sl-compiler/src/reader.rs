@@ -1172,7 +1172,7 @@ fn read_inner(
     Ok((None, chars))
 }
 
-pub fn read_form_state(
+fn read_form_state(
     vm: &mut Vm,
     reader_state: &mut ReaderState,
     chars: CharIter,
@@ -1213,10 +1213,13 @@ pub fn read_form(
     reader_state: &mut ReaderState,
     chars: CharIter,
 ) -> Result<(Value, CharIter), (ReadError, CharIter)> {
-    read_form_state(vm, reader_state, chars, false)
+    vm.pause_gc();
+    let res = read_form_state(vm, reader_state, chars, false);
+    vm.unpause_gc();
+    res
 }
 
-pub fn read_all(
+fn read_all_inner(
     vm: &mut Vm,
     reader_state: &mut ReaderState,
     text: &str,
@@ -1270,6 +1273,17 @@ pub fn read_all(
     Ok(exps)
 }
 
+pub fn read_all(
+    vm: &mut Vm,
+    reader_state: &mut ReaderState,
+    text: &str,
+) -> Result<Vec<Value>, ReadError> {
+    vm.pause_gc();
+    let res = read_all_inner(vm, reader_state, text);
+    vm.unpause_gc();
+    res
+}
+
 pub fn read(
     vm: &mut Vm,
     reader_state: &mut ReaderState,
@@ -1277,7 +1291,9 @@ pub fn read(
     list_only: bool,
 ) -> Result<Value, ReadError> {
     let exps = read_all(vm, reader_state, text)?;
-    if list_only {
+    // Don't exit early without unpausing....
+    vm.pause_gc();
+    let res = if list_only {
         if exps.len() == 1 {
             match exps[0] {
                 Value::Pair(_) => Ok(exps[0]),
@@ -1296,7 +1312,9 @@ pub fn read(
         Ok(exps[0])
     } else {
         Ok(vm.alloc_vector_ro(exps))
-    }
+    };
+    vm.unpause_gc();
+    res
 }
 
 #[cfg(test)]

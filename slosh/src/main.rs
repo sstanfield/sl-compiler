@@ -109,11 +109,22 @@ fn load(vm: &mut Vm, registers: &[Value]) -> VMResult<Value> {
         //compile(vm, &mut state, exp, 0, &mut line)?;
         //state.chunk.encode0(RET, line)?;
         if let Err(e) = pass1(vm, &mut state, exp) {
-            println!("Compile error, {}, line {}: {}", name, line_num(&line), e);
+            println!(
+                "Compile error (pass one), {}, line {}: {}",
+                name,
+                line_num(&line),
+                e
+            );
             return Err(e);
         }
         if let Err(e) = compile(vm, &mut state, exp, 0, &mut line) {
-            println!("Compile error, {} line {}: {}", name, line_num(&line), e);
+            println!(
+                "Compile error, {} line {}: {} exp: {}",
+                name,
+                line_num(&line),
+                e,
+                exp.display_value(vm)
+            );
             return Err(e);
         }
         if let Err(e) = state.chunk.encode0(RET, Some(line_num(&line))) {
