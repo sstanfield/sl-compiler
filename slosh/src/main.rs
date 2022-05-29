@@ -1,6 +1,7 @@
 extern crate sl_liner;
 
-use std::io::ErrorKind;
+use std::borrow::Cow;
+use std::io::{BufReader, ErrorKind};
 use std::sync::Arc;
 
 use slvm::error::*;
@@ -13,6 +14,8 @@ use sl_compiler::reader::*;
 use sl_compiler::state::*;
 
 use sl_liner::{Context, Prompt};
+use slvm::Chunk;
+use unicode_reader::Graphemes;
 
 pub mod debug;
 use debug::*;
@@ -71,6 +74,49 @@ fn line_num(line: &Option<&mut u32>) -> u32 {
     }
 }
 
+fn load_one_expression(
+    vm: &mut Vm,
+    exp: Value,
+    name: &'static str,
+    mut line: &mut Option<&mut u32>,
+) -> VMResult<Arc<Chunk>> {
+    if let Value::Pair(h) = exp {
+        let (_, _) = vm.get_pair(h);
+        if let (Some(line), Some(Value::UInt(dline))) =
+            (&mut line, vm.get_heap_property(h, "dbg-line"))
+        {
+            **line = dline as u32;
+        }
+    }
+    let mut state = CompileState::new_state(vm, name, line_num(line), None);
+    state.chunk.dbg_args = Some(Vec::new());
+    if let Err(e) = pass1(vm, &mut state, exp) {
+        println!(
+            "Compile error (pass one), {}, line {}: {}",
+            name,
+            line_num(line),
+            e
+        );
+        return Err(e);
+    }
+    if let Err(e) = compile(vm, &mut state, exp, 0, line) {
+        println!(
+            "Compile error, {} line {}: {} exp: {}",
+            name,
+            line_num(line),
+            e,
+            exp.display_value(vm)
+        );
+        return Err(e);
+    }
+    if let Err(e) = state.chunk.encode0(RET, Some(line_num(line))) {
+        println!("Compile error, {} line {}: {}", name, line_num(line), e);
+        return Err(e);
+    }
+    state.chunk.extra_regs = state.max_regs;
+    Ok(Arc::new(state.chunk))
+}
+
 fn load(vm: &mut Vm, registers: &[Value]) -> VMResult<Value> {
     if registers.len() != 1 {
         return Err(VMError::new_compile(
@@ -87,53 +133,37 @@ fn load(vm: &mut Vm, registers: &[Value]) -> VMResult<Value> {
         }
         _ => return Err(VMError::new_vm("load: Not a string.")),
     };
-    let txt = std::fs::read_to_string(name).map_err(|e| VMError::new_vm(format!("load: {}", e)))?;
+    let file = std::fs::File::open(name)?;
+    let mut chars: CharIter = Box::new(
+        Graphemes::from(BufReader::new(file))
+            .map(|s| {
+                if let Ok(s) = s {
+                    Cow::Owned(s)
+                } else {
+                    Cow::Borrowed("")
+                }
+            })
+            .peekable(),
+    );
+
     let mut reader_state = ReaderState::new();
-    let exps = read_all(vm, &mut reader_state, &txt)
-        .map_err(|e| VMError::new_vm(format!("load: {}", e)))?;
     let mut linenum = 1;
     let mut line = Some(&mut linenum);
     let mut last = Value::Nil;
-    for exp in exps {
-        if let Value::Pair(h) = exp {
-            let (_, _) = vm.get_pair(h);
-            if let (Some(line), Some(Value::UInt(dline))) =
-                (&mut line, vm.get_heap_property(h, "dbg-line"))
-            {
-                **line = dline as u32;
-            }
+    while let Ok((exp, nchars)) = read_form(vm, &mut reader_state, chars) {
+        chars = nchars;
+        if let Some(handle) = exp.get_handle() {
+            vm.heap_sticky(handle);
         }
-        let mut state = CompileState::new_state(vm, name, line_num(&line), None);
-        state.chunk.dbg_args = Some(Vec::new());
-        //pass1(vm, &mut state, exp)?;
-        //compile(vm, &mut state, exp, 0, &mut line)?;
-        //state.chunk.encode0(RET, line)?;
-        if let Err(e) = pass1(vm, &mut state, exp) {
-            println!(
-                "Compile error (pass one), {}, line {}: {}",
-                name,
-                line_num(&line),
-                e
-            );
-            return Err(e);
+        //vm.pause_gc();
+
+        let chunk = load_one_expression(vm, exp, name, &mut line);
+
+        //vm.unpause_gc();
+        if let Some(handle) = exp.get_handle() {
+            vm.heap_unsticky(handle);
         }
-        if let Err(e) = compile(vm, &mut state, exp, 0, &mut line) {
-            println!(
-                "Compile error, {} line {}: {} exp: {}",
-                name,
-                line_num(&line),
-                e,
-                exp.display_value(vm)
-            );
-            return Err(e);
-        }
-        if let Err(e) = state.chunk.encode0(RET, Some(line_num(&line))) {
-            println!("Compile error, {} line {}: {}", name, line_num(&line), e);
-            return Err(e);
-        }
-        state.chunk.extra_regs = state.max_regs;
-        let chunk = Arc::new(state.chunk.clone());
-        vm.execute(chunk)?;
+        vm.execute(chunk?)?;
         /*            if let Err(err) = vm.execute(chunk) {
             println!("ERROR: {}", err.display(&vm));
             if let Some(err_frame) = vm.err_frame() {

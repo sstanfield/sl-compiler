@@ -297,8 +297,10 @@ pub fn backquote(
         Some(l) => **l,
         None => 0,
     };
-    let exp = qq_expand(vm, exp, line_num, 0)?;
-    pass1(vm, state, exp)?;
-    compile(vm, state, exp, result, &mut None)?; //line)?;
-    Ok(())
+    vm.pause_gc();
+    let result = qq_expand(vm, exp, line_num, 0).and_then(|expand| {
+        pass1(vm, state, expand).and_then(|_| compile(vm, state, expand, result, &mut None))
+    });
+    vm.unpause_gc();
+    result
 }

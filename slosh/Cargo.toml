@@ -6,6 +6,7 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+unicode_reader = "1"
 sl-compiler = { path = "../sl-compiler" }
 sl-liner = { git = "https://github.com/sl-sh-dev/sl-liner.git" }
 slvm = { path = "../../slvm" }
