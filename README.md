@@ -1,3 +1,7 @@
+# DEPRICATED
+
+NOTE: This is depricated and has been moved into a workspace here: https://github.com/sstanfield/slvm
+
 # sl-compiler
 
 Simple Lisp Compiler for slvm
